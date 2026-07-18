@@ -87,6 +87,10 @@ a JSON schema requiring complete `source` and `summary` strings. The candidate
 is replaced atomically only after that structured response validates. The raw
 request and response remain in the run directory for diagnosis.
 
+Transient curl failures, including cloud 5xx responses and request timeouts,
+are retried twice with a bounded 120-second retry window before the attempt is
+reported as failed.
+
 If a model ignores the schema and returns a fenced or raw complete C source
 response, the adapter safely extracts it when `morph_app_entry` is present;
 arbitrary prose is still rejected.
