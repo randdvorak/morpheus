@@ -15,12 +15,13 @@ fi
 # Anchor Codex repository discovery at this isolated run directory.
 /usr/bin/git -C "$workspace" init -q
 
-/bin/cat "$prompt_path" | "$codex_executable" exec \
+/bin/cat "$prompt_path" | "$codex_executable" \
+    --ask-for-approval never \
+    exec \
     --ephemeral \
     --ignore-user-config \
     --ignore-rules \
     --sandbox workspace-write \
-    --ask-for-approval never \
     --skip-git-repo-check \
     --color never \
     -C "$workspace" \
