@@ -154,6 +154,16 @@ set(BUILD_HEADER_ONLY OFF CACHE BOOL "Build miniz header-only" FORCE)
 add_subdirectory(third_party/miniz EXCLUDE_FROM_ALL)
 target_compile_options(miniz PRIVATE -Wno-unused-function)
 
+add_library(morpheus_stb_image STATIC src/host/stb_image_impl.c)
+target_include_directories(morpheus_stb_image PRIVATE
+    "${CMAKE_SOURCE_DIR}/third_party/stb"
+)
+target_compile_options(morpheus_stb_image PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
     src/host/http_service.m
@@ -196,6 +206,7 @@ target_link_libraries(morpheus PRIVATE
     morpheus_sqlite
     yyjson
     miniz
+    morpheus_stb_image
     SDL3::SDL3-static
     "-framework Metal"
     "-framework QuartzCore"
@@ -329,6 +340,18 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_miniz_test PRIVATE miniz)
     add_test(NAME miniz COMMAND morpheus_miniz_test)
+
+    add_executable(morpheus_stb_image_test tests/stb_image_test.c)
+    target_include_directories(morpheus_stb_image_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/stb"
+    )
+    target_compile_options(morpheus_stb_image_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_stb_image_test PRIVATE morpheus_stb_image)
+    add_test(NAME stb_image COMMAND morpheus_stb_image_test)
 
     add_executable(morpheus_fake_agent_provider
         tests/fixtures/fake_agent_provider.c
