@@ -7,3 +7,6 @@
 [submodule "llama.cpp"]
 	path = llama.cpp
 	url = git@github.com:ggml-org/llama.cpp.git
+[submodule "SDL"]
+	path = SDL
+	url = https://github.com/libsdl-org/SDL.git

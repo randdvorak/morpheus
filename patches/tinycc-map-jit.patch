@@ -1,0 +1,173 @@
+diff --git a/tcc.h b/tcc.h
+index 7b4c2371..5482d37a 100644
+--- a/tcc.h
++++ b/tcc.h
+@@ -972,6 +972,9 @@ struct TCCState {
+     const char *run_main; /* entry for tcc_run() */
+     void *run_ptr; /* runtime_memory */
+     unsigned run_size; /* size of runtime_memory  */
++#if defined(__APPLE__) && defined(__aarch64__)
++    void *run_data; /* non-executable runtime data for MAP_JIT builds */
++#endif
+     const char *run_stdin; /* custom stdin file for run_main */
+ #ifdef _WIN64
+     void *run_function_table; /* unwind data */
+diff --git a/tccrun.c b/tccrun.c
+index 4ff511df..31dd2283 100644
+--- a/tccrun.c
++++ b/tccrun.c
+@@ -79,8 +79,19 @@ static void rt_exit(rt_frame *f, int code);
+ # include <sys/mman.h>
+ #endif
+ 
++#if defined(__APPLE__) && defined(__aarch64__)
++# include <pthread.h>
++# define CONFIG_RUNMEM_MAP_JIT 1
++
++static void tcc_jit_write_protect(int enabled)
++{
++    if (__builtin_available(macOS 11.0, *))
++        pthread_jit_write_protect_np(enabled);
++}
++#endif
++
+ static int protect_pages(void *ptr, unsigned long length, int mode);
+-static int tcc_relocate_ex(TCCState *s1, void *ptr, unsigned ptr_diff);
++static int tcc_relocate_ex(TCCState *s1, void *ptr, addr_t ptr_diff);
+ static void st_link(TCCState *s1);
+ static void st_unlink(TCCState *s1);
+ #ifdef CONFIG_TCC_BACKTRACE
+@@ -113,10 +124,10 @@ static void win64_del_function_table(void *);
+ # define CONFIG_RUNMEM_VIRTUALALLOC 1
+ #endif
+ 
+-static int rt_mem(TCCState *s1, int size)
++static addr_t rt_mem(TCCState *s1, int size)
+ {
+     void *ptr;
+-    int ptr_diff = 0;
++    addr_t ptr_diff = 0;
+ #ifdef CONFIG_SELINUX
+     /* Using mmap instead of malloc */
+     void *prw;
+@@ -139,6 +150,23 @@ static int rt_mem(TCCState *s1, int size)
+     ptr = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+     if (!ptr)
+         return tcc_error_noabort("tccrun: could not allocate memory");
++#elif CONFIG_RUNMEM_MAP_JIT
++    void *data;
++    size = PAGEALIGN(size);
++    ptr = mmap(NULL, size, PROT_READ | PROT_WRITE | PROT_EXEC,
++        MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
++    if (ptr == MAP_FAILED)
++        goto map_jit_error;
++    data = mmap(NULL, size, PROT_READ | PROT_WRITE,
++        MAP_PRIVATE | MAP_ANON, -1, 0);
++    if (data == MAP_FAILED) {
++        munmap(ptr, size);
++map_jit_error:
++        tcc_error_noabort("tccrun: could not allocate MAP_JIT memory");
++        return (addr_t)-1;
++    }
++    s1->run_data = data;
++    ptr_diff = (addr_t)data - (addr_t)ptr;
+ #else
+     ptr = tcc_malloc(size += PAGESIZE); /* one extra page to align malloc memory */
+ #endif
+@@ -153,7 +181,8 @@ static int rt_mem(TCCState *s1, int size)
+ 
+ LIBTCCAPI int tcc_relocate(TCCState *s1)
+ {
+-    int size, ret, ptr_diff;
++    int size, ret;
++    addr_t ptr_diff;
+ 
+     if (s1->run_ptr)
+         exit(tcc_error_noabort("'tcc_relocate()' twice is no longer supported"));
+@@ -165,9 +194,15 @@ LIBTCCAPI int tcc_relocate(TCCState *s1)
+     if (size < 0)
+         return -1;
+     ptr_diff = rt_mem(s1, size);
+-    if (ptr_diff < 0)
++    if (ptr_diff == (addr_t)-1)
+         return -1;
++#ifdef CONFIG_RUNMEM_MAP_JIT
++    tcc_jit_write_protect(0);
++#endif
+     ret = tcc_relocate_ex(s1, s1->run_ptr, ptr_diff);
++#ifdef CONFIG_RUNMEM_MAP_JIT
++    tcc_jit_write_protect(1);
++#endif
+     if (ret == 0)
+         st_link(s1);
+     return ret;
+@@ -202,6 +237,10 @@ ST_FUNC void tcc_run_free(TCCState *s1)
+     munmap(ptr, size);
+ #elif CONFIG_RUNMEM_VIRTUALALLOC
+     VirtualFree(ptr, size, MEM_RELEASE);
++#elif CONFIG_RUNMEM_MAP_JIT
++    munmap(ptr, size);
++    munmap(s1->run_data, size);
++    s1->run_data = NULL;
+ #else
+     /* unprotect memory to make it usable for malloc again */
+     protect_pages((void*)PAGEALIGN(ptr), size - PAGESIZE, 2 /*rw*/);
+@@ -327,7 +366,7 @@ static void cleanup_sections(TCCState *s1)
+ 
+ /* relocate code. Return -1 on error, required size if ptr is NULL,
+    otherwise copy code into buffer passed by the caller */
+-static int tcc_relocate_ex(TCCState *s1, void *ptr, unsigned ptr_diff)
++static int tcc_relocate_ex(TCCState *s1, void *ptr, addr_t ptr_diff)
+ {
+     Section *s;
+     unsigned offset, length, align, i, k, f;
+@@ -354,6 +393,10 @@ redo:
+         return -1;
+     if (copy == 3)
+         return 0;
++#ifdef CONFIG_RUNMEM_MAP_JIT
++    if (copy == 2)
++        tcc_jit_write_protect(1);
++#endif
+ 
+     for (k = 0; k < 3; ++k) { /* 0:rx, 1:ro, 2:rw sections */
+         n = 0; addr = 0;
+@@ -376,8 +419,10 @@ redo:
+                     printf("%d: %-16s %p  len %05x  align %04x\n",
+                         k, s->name, (void*)s->sh_addr, length, s->sh_addralign);
+                 ptr = (void*)s->sh_addr;
++#ifndef CONFIG_RUNMEM_MAP_JIT
+                 if (k == 0)
+                     ptr = (void*)(s->sh_addr + ptr_diff);
++#endif
+                 if (NULL == s->data || s->sh_type == SHT_NOBITS)
+                     memset(ptr, 0, length);
+                 else
+@@ -412,11 +457,16 @@ redo:
+                 continue;
+ #endif
+             f = k;
++#ifdef CONFIG_RUNMEM_MAP_JIT
++            if (f == 0 || f == 2)
++                continue;
++#else
+             if (f >= CONFIG_RUNMEM_RO) {
+                 if (f != 0)
+                     continue;
+                 f = 3; /* change only SHF_EXECINSTR to rwx */
+             }
++#endif
+             n = PAGEALIGN(n);
+             if (s1->verbose == 2) {
+                 printf("protect         %3s %p  len %05x\n",
+@@ -427,7 +477,9 @@ redo:
+ #ifdef _WIN32
+                     "VirtualProtect failed");
+ #else
+-                    "mprotect failed (did you mean to configure --with-selinux?)");
++                    "mprotect failed for mode %u: %s",
++                    f,
++                    strerror(errno));
+ #endif
+         }
+     }
