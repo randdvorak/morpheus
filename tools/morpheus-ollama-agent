@@ -72,7 +72,11 @@ echo "Using Ollama model: $model"
         format: {
             type: "object",
             properties: {
-                source: {type: "string"},
+                source: {
+                    type: "string",
+                    minLength: 256,
+                    pattern: "^.*morph_app_entry.*$"
+                },
                 summary: {type: "string"}
             },
             required: ["source", "summary"],

@@ -20,6 +20,8 @@ case "$url" in
                 '.model == "fake-coder:latest" and
                  .stream == false and
                  .format.type == "object" and
+                 .format.properties.source.pattern == "^.*morph_app_entry.*$" and
+                 .format.properties.source.minLength == 256 and
                  (.messages[0].content | contains("Do not ask follow-up questions")) and
                  (.messages[0].content | contains("MORPHEUS_RENDER_NUKLEAR_WINDOWS")) and
                  (.messages[0].content | contains("ui_label")) and

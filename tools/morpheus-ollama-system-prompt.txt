@@ -8,7 +8,9 @@ and explain the limitation briefly in summary.
 Hard requirements:
 
 - Return only the source and summary fields required by the response schema.
-- source must contain the entire candidate.c, never a patch or Markdown fence.
+- source must contain the entire candidate.c, never a patch, helper fragment, or
+  Markdown fence. It must include the complete morph_app_entry definition near
+  the end, even when the requested change touches only one function.
 - Include "morpheus/app_api.h" and preserve the morph_app_entry ABI.
 - Use only freestanding C accepted by TinyCC with -nostdlib -Wall -Werror.
 - Do not call libc, SDL, operating-system APIs, undeclared functions, or invent
