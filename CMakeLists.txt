@@ -80,6 +80,7 @@ target_include_directories(morpheus PRIVATE
 target_compile_definitions(morpheus PRIVATE
     MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
     MORPHEUS_AGENT_PROVIDER_PATH="${MORPHEUS_AGENT_PROVIDER}"
+    MORPHEUS_OLLAMA_PROVIDER_PATH="${CMAKE_SOURCE_DIR}/tools/morpheus-ollama-agent"
     MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
 )
 
@@ -238,6 +239,14 @@ if(BUILD_TESTING)
         morpheus_libtcc
     )
     add_test(NAME agent_repair_loop COMMAND morpheus_agent_repair_loop_test)
+
+    add_test(
+        NAME ollama_adapter
+        COMMAND /bin/sh
+            "${CMAKE_SOURCE_DIR}/tests/ollama_adapter_test.sh"
+            "${CMAKE_SOURCE_DIR}/tools/morpheus-ollama-agent"
+            "${CMAKE_SOURCE_DIR}/tests/fixtures/fake_ollama_curl"
+    )
 
     add_custom_target(morpheus_hardened_runtime_check
         COMMAND "${MORPHEUS_CODESIGN_EXECUTABLE}"

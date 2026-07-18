@@ -37,7 +37,7 @@ static void cleanup(const morph_agent_session *session, const char *root)
         "diagnostics.txt", "prompt.txt", "response.txt", "provider.log", "candidate.c", "build.txt"
     };
     const char *run_files[] = {
-        "candidate.c", "source-before.c", "request.txt", "app_api.h", "patch.diff", "outcome.json"
+        "candidate.c", "source-before.c", "request.txt", "app_api.h", "model.txt", "patch.diff", "outcome.json"
     };
     char path[MORPH_AGENT_PATH_CAPACITY];
     size_t index;
@@ -93,6 +93,11 @@ int main(void)
             &session,
             root,
             MORPHEUS_FAKE_AGENT_PATH,
+            error,
+            sizeof(error)) ||
+        !morph_agent_session_set_model(
+            &session,
+            "test-model",
             error,
             sizeof(error)) ||
         !morph_agent_session_begin(

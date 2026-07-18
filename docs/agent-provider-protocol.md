@@ -37,3 +37,29 @@ Generated code is always treated as a preview first. A user must explicitly
 accept it before Morpheus updates durable source and creates a revision.
 Rejecting recompiles the pre-run source and restores the state captured before
 preview activation.
+
+## Ollama provider
+
+`tools/morpheus-ollama-agent` connects to Ollama's native API at
+`http://localhost:11434` by default. Select **Provider: Ollama** in Morpheus and
+optionally enter an installed model name. A blank model selects the first model
+returned by `/api/tags`. Start the service with `ollama serve` and install a
+coding-capable model with `ollama pull <model>`.
+
+The adapter sends a non-streaming `/api/chat` request with temperature zero and
+a JSON schema requiring complete `source` and `summary` strings. The candidate
+is replaced atomically only after that structured response validates. The raw
+request and response remain in the run directory for diagnosis.
+
+Configuration environment variables:
+
+- `MORPHEUS_AGENT_BACKEND=ollama` starts Morpheus with Ollama selected.
+- `MORPHEUS_OLLAMA_MODEL` selects a model without using the UI field.
+- `MORPHEUS_OLLAMA_URL` overrides the default localhost server.
+- `MORPHEUS_OLLAMA_KEEP_ALIVE` defaults to `10m`.
+- `MORPHEUS_OLLAMA_TIMEOUT` defaults to 600 seconds.
+
+See Ollama's [API introduction](https://docs.ollama.com/api/introduction),
+[model listing](https://docs.ollama.com/api/tags), and
+[structured outputs](https://docs.ollama.com/capabilities/structured-outputs)
+documentation for the underlying server behavior.

@@ -225,6 +225,23 @@ int morph_agent_session_init(
     return 1;
 }
 
+int morph_agent_session_set_model(
+    morph_agent_session *session,
+    const char *model,
+    char *error,
+    unsigned long error_capacity)
+{
+    int length = snprintf(
+        session->provider_model,
+        sizeof(session->provider_model),
+        "%s",
+        model ? model : "");
+    if (length < 0 || (unsigned long)length >= sizeof(session->provider_model)) {
+        return morph_agent_error(error, error_capacity, "Provider model name is too long");
+    }
+    return 1;
+}
+
 int morph_agent_session_begin(
     morph_agent_session *session,
     const char *request,
@@ -234,6 +251,7 @@ int morph_agent_session_begin(
     unsigned long error_capacity)
 {
     char api_destination[MORPH_AGENT_PATH_CAPACITY];
+    char model_destination[MORPH_AGENT_PATH_CAPACITY];
 
     if (session->status == MORPH_AGENT_RUNNING) {
         return morph_agent_error(error, error_capacity, "Agent provider is already running");
@@ -272,12 +290,24 @@ int morph_agent_session_begin(
             sizeof(api_destination),
             "%s/app_api.h",
             session->run_directory,
+            0) ||
+        !morph_agent_path(
+            model_destination,
+            sizeof(model_destination),
+            "%s/model.txt",
+            session->run_directory,
             0)) {
         return morph_agent_error(error, error_capacity, "Agent run path is too long");
     }
     return morph_agent_copy(source_path, session->source_before_path, error, error_capacity) &&
         morph_agent_copy(source_path, session->candidate_path, error, error_capacity) &&
         morph_agent_copy(api_header_path, api_destination, error, error_capacity) &&
+        morph_agent_write(
+            model_destination,
+            session->provider_model,
+            (unsigned long)strlen(session->provider_model),
+            error,
+            error_capacity) &&
         morph_agent_write(
             session->request_path,
             request,
@@ -582,6 +612,23 @@ int morph_agent_session_record_outcome(
         return morph_agent_error(error, error_capacity, "Outcome artifact is too large");
     }
     return morph_agent_write(path, document, (unsigned long)length, error, error_capacity);
+}
+
+int morph_agent_session_read_provider_log(
+    const morph_agent_session *session,
+    char *output,
+    unsigned long output_capacity)
+{
+    FILE *file;
+    size_t size;
+    if (!output || output_capacity == 0) return 0;
+    output[0] = '\0';
+    file = fopen(session->provider_log_path, "rb");
+    if (!file) return 0;
+    size = fread(output, 1, (size_t)output_capacity - 1, file);
+    fclose(file);
+    output[size] = '\0';
+    return size != 0;
 }
 
 void morph_agent_session_cancel(morph_agent_session *session)

@@ -5,6 +5,7 @@
 
 #define MORPH_AGENT_PATH_CAPACITY 4096
 #define MORPH_AGENT_REQUEST_CAPACITY 2048
+#define MORPH_AGENT_MODEL_CAPACITY 256
 #define MORPH_AGENT_MAX_ATTEMPTS 3
 
 typedef enum morph_agent_status {
@@ -25,6 +26,7 @@ typedef struct morph_agent_session {
     char diagnostics_path[MORPH_AGENT_PATH_CAPACITY];
     char response_path[MORPH_AGENT_PATH_CAPACITY];
     char provider_log_path[MORPH_AGENT_PATH_CAPACITY];
+    char provider_model[MORPH_AGENT_MODEL_CAPACITY];
     unsigned long run_id;
     unsigned int attempt;
     pid_t process_id;
@@ -43,6 +45,11 @@ int morph_agent_session_begin(
     const char *request,
     const char *source_path,
     const char *api_header_path,
+    char *error,
+    unsigned long error_capacity);
+int morph_agent_session_set_model(
+    morph_agent_session *session,
+    const char *model,
     char *error,
     unsigned long error_capacity);
 int morph_agent_session_start_attempt(
@@ -82,6 +89,10 @@ int morph_agent_session_record_outcome(
     unsigned long revision,
     char *error,
     unsigned long error_capacity);
+int morph_agent_session_read_provider_log(
+    const morph_agent_session *session,
+    char *output,
+    unsigned long output_capacity);
 void morph_agent_session_cancel(morph_agent_session *session);
 
 #endif

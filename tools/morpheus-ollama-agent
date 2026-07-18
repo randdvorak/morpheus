@@ -1,0 +1,105 @@
+#!/bin/sh
+set -eu
+
+workspace=$1
+prompt_path=$2
+diagnostics_path=$3
+response_path=$4
+ollama_url=${MORPHEUS_OLLAMA_URL:-http://localhost:11434}
+ollama_url=${ollama_url%/}
+curl_executable=${MORPHEUS_CURL_EXECUTABLE:-/usr/bin/curl}
+jq_executable=${MORPHEUS_JQ_EXECUTABLE:-/usr/bin/jq}
+model=${MORPHEUS_OLLAMA_MODEL:-}
+keep_alive=${MORPHEUS_OLLAMA_KEEP_ALIVE:-10m}
+timeout=${MORPHEUS_OLLAMA_TIMEOUT:-600}
+model_path=$workspace/model.txt
+candidate_path=$workspace/candidate.c
+request_path=$workspace/ollama-request.json
+raw_response_path=$workspace/ollama-response.json
+candidate_temporary=$workspace/candidate.c.ollama.tmp
+
+if [ ! -x "$curl_executable" ] || [ ! -x "$jq_executable" ]; then
+    echo "Ollama provider requires executable curl and jq commands" >&2
+    exit 127
+fi
+
+if [ -z "$model" ] && [ -s "$model_path" ]; then
+    model=$(/usr/bin/sed -n '1{s/[[:space:]]*$//;p;}' "$model_path")
+fi
+
+if [ -z "$model" ]; then
+    tags=$(
+        "$curl_executable" \
+            --silent \
+            --show-error \
+            --fail \
+            --max-time 3 \
+            "$ollama_url/api/tags"
+    ) || {
+        echo "Unable to reach Ollama at $ollama_url. Start it with: ollama serve" >&2
+        exit 69
+    }
+    model=$(printf '%s' "$tags" | "$jq_executable" -er '.models[0].name // .models[0].model // empty') || {
+        echo "Ollama has no installed models. Install one with: ollama pull <model>" >&2
+        exit 69
+    }
+fi
+
+echo "Using Ollama model: $model"
+
+"$jq_executable" -n \
+    --arg model "$model" \
+    --arg keep_alive "$keep_alive" \
+    --rawfile prompt "$prompt_path" \
+    --rawfile source "$candidate_path" \
+    '{
+        model: $model,
+        stream: false,
+        keep_alive: $keep_alive,
+        format: {
+            type: "object",
+            properties: {
+                source: {type: "string"},
+                summary: {type: "string"}
+            },
+            required: ["source", "summary"],
+            additionalProperties: false
+        },
+        options: {temperature: 0},
+        messages: [
+            {
+                role: "system",
+                content: "You are the Morpheus coding agent. Return the complete replacement candidate.c and a short summary in the required JSON schema. Do not use markdown fences. Preserve the required ABI and change only what the request requires."
+            },
+            {
+                role: "user",
+                content: ($prompt + "\n\nCurrent candidate.c:\n" + $source)
+            }
+        ]
+    }' > "$request_path"
+
+if ! "$curl_executable" \
+    --silent \
+    --show-error \
+    --fail \
+    --max-time "$timeout" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$request_path" \
+    "$ollama_url/api/chat" > "$raw_response_path"; then
+    echo "Ollama generation failed for model $model at $ollama_url" >&2
+    exit 70
+fi
+
+if ! "$jq_executable" -er \
+    '.message.content | fromjson | .source | select(type == "string" and length > 0)' \
+    "$raw_response_path" > "$candidate_temporary"; then
+    echo "Ollama returned no valid candidate source" >&2
+    exit 65
+fi
+
+"$jq_executable" -er \
+    '.message.content | fromjson | .summary // "Ollama updated candidate.c"' \
+    "$raw_response_path" > "$response_path"
+/bin/mv "$candidate_temporary" "$candidate_path"
+
+: "$diagnostics_path"

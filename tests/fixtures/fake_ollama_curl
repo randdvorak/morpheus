@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+url=
+request_path=
+for argument in "$@"; do
+    case "$argument" in
+        @*) request_path=${argument#@} ;;
+        http://*|https://*) url=$argument ;;
+    esac
+done
+
+case "$url" in
+    */api/tags)
+        printf '%s\n' '{"models":[{"name":"fake-coder:latest"}]}'
+        ;;
+    */api/chat)
+        if [ -z "$request_path" ] ||
+            ! /usr/bin/jq -e \
+                '.model == "fake-coder:latest" and .stream == false and .format.type == "object"' \
+                "$request_path" >/dev/null; then
+            echo "invalid Ollama request" >&2
+            exit 22
+        fi
+        content=$(/usr/bin/jq -cn '{source:"int repaired_by_ollama;\n",summary:"local model updated candidate"}')
+        /usr/bin/jq -cn --arg content "$content" '{message:{role:"assistant",content:$content},done:true}'
+        ;;
+    *)
+        echo "unexpected URL: $url" >&2
+        exit 22
+        ;;
+esac

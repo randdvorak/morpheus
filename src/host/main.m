@@ -259,11 +259,14 @@ int main(int argc, char **argv)
     char store_error[4096] = {0};
     char revision_label[128];
     char agent_request[MORPH_AGENT_REQUEST_CAPACITY] = {0};
+    char ollama_model[MORPH_AGENT_MODEL_CAPACITY] = {0};
     char agent_status[256] = "Agent ready";
     char agent_root[MORPH_AGENT_PATH_CAPACITY];
     const char *agent_provider_path;
     const char *module_source;
     const char *workspace_root;
+    const char *agent_backend;
+    const char *configured_ollama_model;
     const void *pixels;
     int atlas_width;
     int atlas_height;
@@ -271,11 +274,15 @@ int main(int argc, char **argv)
     int reload_requested = 0;
     int rollback_requested = 0;
     int agent_request_length = 0;
+    int ollama_model_length = 0;
     int agent_submit_requested = 0;
     int agent_accept_requested = 0;
     int agent_reject_requested = 0;
+    int agent_toggle_provider_requested = 0;
     int agent_ready = 0;
     int agent_preview_active = 0;
+    int agent_uses_ollama = 0;
+    int agent_provider_is_custom = 0;
     int revision_store_ready = 0;
     int recovered_from_crash = 0;
     void *preview_restore_state = NULL;
@@ -296,8 +303,26 @@ int main(int argc, char **argv)
         workspace_root = MORPHEUS_SOURCE_ROOT "/generated";
     }
     agent_provider_path = getenv("MORPHEUS_AGENT_PROVIDER");
-    if (!agent_provider_path || !*agent_provider_path) {
-        agent_provider_path = MORPHEUS_AGENT_PROVIDER_PATH;
+    agent_provider_is_custom = agent_provider_path && *agent_provider_path;
+    agent_backend = getenv("MORPHEUS_AGENT_BACKEND");
+    if (!agent_provider_is_custom) {
+        agent_uses_ollama = agent_backend && strcmp(agent_backend, "ollama") == 0;
+        agent_provider_path = agent_uses_ollama
+            ? MORPHEUS_OLLAMA_PROVIDER_PATH
+            : MORPHEUS_AGENT_PROVIDER_PATH;
+    }
+    configured_ollama_model = getenv("MORPHEUS_OLLAMA_MODEL");
+    if (configured_ollama_model && *configured_ollama_model) {
+        ollama_model_length = snprintf(
+            ollama_model,
+            sizeof(ollama_model),
+            "%s",
+            configured_ollama_model);
+        if (ollama_model_length < 0 ||
+            (unsigned long)ollama_model_length >= sizeof(ollama_model)) {
+            ollama_model_length = 0;
+            ollama_model[0] = '\0';
+        }
     }
     snprintf(agent_root, sizeof(agent_root), "%s/agent", workspace_root);
 
@@ -402,6 +427,12 @@ int main(int argc, char **argv)
             sizeof(agent_status),
             "Agent unavailable: %.220s",
             revision_store_ready ? store_error : "revision store is required");
+    } else {
+        (void)morph_agent_session_set_model(
+            &agent_session,
+            agent_uses_ollama ? ollama_model : "",
+            store_error,
+            sizeof(store_error));
     }
 
     if (revision_store_ready && revisions.active_revision) {
@@ -502,7 +533,7 @@ int main(int argc, char **argv)
 
         if (nk_begin(&ctx,
                 "Morpheus Host",
-                nk_rect(30, 30, 430, 540),
+                nk_rect(30, 30, 430, 650),
                 NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE |
                 NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
             nk_layout_row_dynamic(&ctx, 28.0f, 1);
@@ -545,6 +576,37 @@ int main(int argc, char **argv)
 
             nk_layout_row_dynamic(&ctx, 24.0f, 1);
             nk_label(&ctx, "Agent policy: isolated manual preview", NK_TEXT_LEFT);
+            nk_layout_row_dynamic(&ctx, 30.0f, 1);
+            if (!agent_provider_is_custom && !agent_preview_active &&
+                agent_session.status != MORPH_AGENT_RUNNING) {
+                if (nk_button_label(
+                        &ctx,
+                        agent_uses_ollama
+                            ? "Provider: Ollama (switch to Codex)"
+                            : "Provider: Codex (switch to Ollama)")) {
+                    agent_toggle_provider_requested = 1;
+                }
+            } else {
+                nk_label(
+                    &ctx,
+                    agent_provider_is_custom
+                        ? "Provider: custom executable"
+                        : (agent_uses_ollama ? "Provider: Ollama" : "Provider: Codex"),
+                    NK_TEXT_LEFT);
+            }
+            if (agent_uses_ollama && !agent_provider_is_custom) {
+                nk_layout_row_dynamic(&ctx, 24.0f, 1);
+                nk_label(&ctx, "Ollama model (blank selects first installed):", NK_TEXT_LEFT);
+                nk_layout_row_dynamic(&ctx, 30.0f, 1);
+                nk_edit_string(
+                    &ctx,
+                    NK_EDIT_FIELD,
+                    ollama_model,
+                    &ollama_model_length,
+                    (int)sizeof(ollama_model) - 1,
+                    nk_filter_default);
+                ollama_model[ollama_model_length] = '\0';
+            }
             nk_layout_row_dynamic(&ctx, 24.0f, 1);
             nk_label(&ctx, "Describe a generated application change:", NK_TEXT_LEFT);
             nk_layout_row_dynamic(&ctx, 72.0f, 1);
@@ -604,7 +666,40 @@ int main(int argc, char **argv)
                 NK_ANTI_ALIASING_ON);
         }
 
-        if (agent_accept_requested) {
+        if (agent_toggle_provider_requested) {
+            agent_toggle_provider_requested = 0;
+            agent_uses_ollama = !agent_uses_ollama;
+            agent_provider_path = agent_uses_ollama
+                ? MORPHEUS_OLLAMA_PROVIDER_PATH
+                : MORPHEUS_AGENT_PROVIDER_PATH;
+            agent_ready = morph_agent_session_init(
+                &agent_session,
+                agent_root,
+                agent_provider_path,
+                module_error,
+                sizeof(module_error));
+            if (agent_ready) {
+                agent_ready = morph_agent_session_set_model(
+                    &agent_session,
+                    agent_uses_ollama ? ollama_model : "",
+                    module_error,
+                    sizeof(module_error));
+            }
+            if (agent_ready) {
+                snprintf(
+                    agent_status,
+                    sizeof(agent_status),
+                    "%s provider ready",
+                    agent_uses_ollama ? "Ollama" : "Codex");
+                module_error[0] = '\0';
+            } else {
+                snprintf(
+                    agent_status,
+                    sizeof(agent_status),
+                    "%s provider unavailable",
+                    agent_uses_ollama ? "Ollama" : "Codex");
+            }
+        } else if (agent_accept_requested) {
             int accepted = 0;
             int source_updated = 0;
             agent_accept_requested = 0;
@@ -706,7 +801,12 @@ int main(int argc, char **argv)
                 agent_base_source = accepted_source;
             }
             morph_revision_store_release_state(accepted_state);
-            if (base_ready && morph_agent_session_begin(
+            if (base_ready && morph_agent_session_set_model(
+                    &agent_session,
+                    agent_uses_ollama ? ollama_model : "",
+                    module_error,
+                    sizeof(module_error)) &&
+                morph_agent_session_begin(
                     &agent_session,
                     agent_request,
                     agent_base_source,
@@ -862,7 +962,12 @@ int main(int argc, char **argv)
                         store_error,
                         sizeof(store_error));
                 } else {
-                    snprintf(module_error, sizeof(module_error), "External coding agent exited unsuccessfully");
+                    if (!morph_agent_session_read_provider_log(
+                            &agent_session,
+                            module_error,
+                            sizeof(module_error))) {
+                        snprintf(module_error, sizeof(module_error), "External coding agent exited unsuccessfully");
+                    }
                 }
 
                 if (candidate_succeeded) {
