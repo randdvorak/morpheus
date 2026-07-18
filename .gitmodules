@@ -16,3 +16,6 @@
 [submodule "third_party/yyjson"]
 	path = third_party/yyjson
 	url = https://github.com/ibireme/yyjson.git
+[submodule "third_party/miniz"]
+	path = third_party/miniz
+	url = https://github.com/richgel999/miniz.git

@@ -144,6 +144,16 @@ set(YYJSON_DISABLE_UTILS ON CACHE BOOL "Disable yyjson patch/pointer utilities" 
 set(YYJSON_DISABLE_NON_STANDARD ON CACHE BOOL "Disable non-standard JSON" FORCE)
 add_subdirectory(third_party/yyjson EXCLUDE_FROM_ALL)
 
+set(BUILD_EXAMPLES OFF CACHE BOOL "Build miniz examples" FORCE)
+set(BUILD_FUZZERS OFF CACHE BOOL "Build miniz fuzzers" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "Build miniz tests" FORCE)
+set(INSTALL_PROJECT OFF CACHE BOOL "Install miniz" FORCE)
+set(BUILD_NO_STDIO ON CACHE BOOL "Build miniz without stdio archive APIs" FORCE)
+set(AMALGAMATE_SOURCES OFF CACHE BOOL "Generate miniz amalgamation" FORCE)
+set(BUILD_HEADER_ONLY OFF CACHE BOOL "Build miniz header-only" FORCE)
+add_subdirectory(third_party/miniz EXCLUDE_FROM_ALL)
+target_compile_options(miniz PRIVATE -Wno-unused-function)
+
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
     src/host/http_service.m
@@ -185,6 +195,7 @@ target_link_libraries(morpheus PRIVATE
     morpheus_libtcc
     morpheus_sqlite
     yyjson
+    miniz
     SDL3::SDL3-static
     "-framework Metal"
     "-framework QuartzCore"
@@ -308,6 +319,16 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_yyjson_test PRIVATE yyjson)
     add_test(NAME yyjson COMMAND morpheus_yyjson_test)
+
+    add_executable(morpheus_miniz_test tests/miniz_test.c)
+    target_compile_options(morpheus_miniz_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wno-unused-function
+    )
+    target_link_libraries(morpheus_miniz_test PRIVATE miniz)
+    add_test(NAME miniz COMMAND morpheus_miniz_test)
 
     add_executable(morpheus_fake_agent_provider
         tests/fixtures/fake_agent_provider.c
