@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 project(morpheus VERSION 0.1.0 LANGUAGES C OBJC)
 
 include(CTest)
+find_package(CURL REQUIRED)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -90,6 +91,7 @@ add_dependencies(morpheus_libtcc morpheus_tinycc)
 
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
+    src/host/http_service.c
     src/agent/agent_session.c
     src/compiler/runtime_module.c
     src/project/revision_store.c
@@ -129,6 +131,7 @@ target_link_libraries(morpheus PRIVATE
     "-framework Metal"
     "-framework QuartzCore"
     "-framework Foundation"
+    CURL::libcurl
     ${CMAKE_DL_LIBS}
 )
 
@@ -190,6 +193,25 @@ if(BUILD_TESTING)
     )
     set_target_properties(morpheus_runtime_reload_test PROPERTIES ENABLE_EXPORTS TRUE)
     add_test(NAME runtime_reload COMMAND morpheus_runtime_reload_test)
+
+    add_executable(morpheus_http_service_test
+        tests/http_service_test.c
+        src/host/http_service.c
+    )
+    target_include_directories(morpheus_http_service_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/src/host"
+    )
+    target_compile_definitions(morpheus_http_service_test PRIVATE
+        MORPHEUS_TEST_FIXTURE_ROOT="${CMAKE_SOURCE_DIR}/tests/fixtures"
+    )
+    target_compile_options(morpheus_http_service_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_http_service_test PRIVATE CURL::libcurl)
+    add_test(NAME http_service COMMAND morpheus_http_service_test)
 
     add_executable(morpheus_revision_store_test
         tests/revision_store_test.c

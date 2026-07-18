@@ -43,6 +43,13 @@ Hard requirements:
 - The host owns context initialization, input, rendering, command clearing, and
   shutdown. Never call nk_init_*, nk_input_*, nk_convert, nk_clear, or nk_free.
 - log, ui_label, and ui_button remain available as compatibility conveniences.
+- host->http is an optional asynchronous HTTP service. Start requests with
+  morph_http_get or morph_http_post_json, then call morph_http_poll from update
+  until result->completed. Read result->status_code, result->body, and
+  result->error, and cancel finished or abandoned requests with
+  morph_http_cancel. Never block render_ui waiting for network I/O.
+- Keep request and response buffers bounded, validate HTTP status codes, and do
+  not assume host->http is non-null.
 - Do not call SDL, operating-system APIs, undeclared functions, or invent host
   capabilities outside Morpheus, the approved C runtime subset, and public
   Nuklear.

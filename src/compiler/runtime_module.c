@@ -130,6 +130,10 @@ static void morph_add_nuklear_symbols(TCCState *compiler)
     MORPHEUS_RUNTIME_SYMBOL(atof)
     MORPHEUS_RUNTIME_SYMBOL(qsort)
     MORPHEUS_RUNTIME_SYMBOL(bsearch)
+    MORPHEUS_RUNTIME_SYMBOL(morph_http_get)
+    MORPHEUS_RUNTIME_SYMBOL(morph_http_post_json)
+    MORPHEUS_RUNTIME_SYMBOL(morph_http_poll)
+    MORPHEUS_RUNTIME_SYMBOL(morph_http_cancel)
 #undef MORPHEUS_RUNTIME_SYMBOL
 }
 

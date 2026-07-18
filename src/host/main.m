@@ -20,6 +20,7 @@
 #include "nuklear_metal.h"
 
 #include "runtime_module.h"
+#include "http_service.h"
 #include "revision_store.h"
 #include "agent_session.h"
 
@@ -256,6 +257,7 @@ int main(int argc, char **argv)
     morph_runtime_module module;
     morph_revision_store revisions;
     morph_agent_session agent_session;
+    morph_http_service *http_service = NULL;
     char module_error[4096] = {0};
     char store_error[4096] = {0};
     char revision_label[128];
@@ -389,6 +391,11 @@ int main(int argc, char **argv)
     host.ui_label = host_ui_label;
     host.ui_button = host_ui_button;
     host.nuklear = &ctx;
+    http_service = morph_http_service_create();
+    host.http = http_service;
+    if (!http_service) {
+        SDL_Log("HTTP service unavailable; generated app networking disabled");
+    }
 
     revision_store_ready = morph_revision_store_init(
         &revisions,
@@ -531,6 +538,7 @@ int main(int argc, char **argv)
         }
         nk_input_end(&ctx);
 
+        morph_http_service_tick(http_service);
         morph_runtime_module_update(&module, &host, dt);
 
         if (nk_begin(&ctx,
@@ -1021,6 +1029,8 @@ int main(int argc, char **argv)
 
     exit_code = EXIT_SUCCESS;
     morph_runtime_module_destroy(&module, &host);
+    morph_http_service_destroy(http_service);
+    http_service = NULL;
     morph_agent_session_cancel(&agent_session);
     free(preview_restore_state);
     if (revision_store_ready &&

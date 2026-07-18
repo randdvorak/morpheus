@@ -67,6 +67,12 @@ host process while retaining `-nostdlib`. Modules must bound allocations and
 release owned memory from `destroy`; other libc, SDL, OS, filesystem, network,
 and time APIs are unavailable.
 
+The first SDK service is asynchronous HTTP through `host->http`. Use
+`morph_http_get` or `morph_http_post_json`, poll with `morph_http_poll` from
+`update`, and release completed or abandoned requests with
+`morph_http_cancel`. The service uses libcurl's multi interface and bounds each
+response at 1 MiB; `render_ui` must never wait on network I/O.
+
 ## Ollama provider
 
 `tools/morpheus-ollama-agent` connects to Ollama's native API at

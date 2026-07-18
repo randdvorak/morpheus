@@ -1,6 +1,8 @@
 #ifndef MORPHEUS_APP_API_H
 #define MORPHEUS_APP_API_H
 
+#include "morpheus/sdk.h"
+
 #define MORPHEUS_HOST_ABI_VERSION 2u
 #define MORPHEUS_APP_ABI_VERSION 2u
 
@@ -31,6 +33,7 @@ struct morph_host {
     void (*ui_label)(morph_host *host, const char *text);
     int (*ui_button)(morph_host *host, const char *text);
     struct nk_context *nuklear;
+    morph_http_service *http;
 };
 
 typedef struct morph_app_api {

@@ -56,6 +56,42 @@ The immutable host kernel owns:
 The host may be implemented internally in C++ so it can integrate llama.cpp
 naturally, but it exposes an `extern "C"` interface to generated modules.
 
+## Batteries-Included Application SDK
+
+Generated seed apps should have a small, documented standard library for common
+application work without receiving unrestricted access to the host process. The
+SDK exposes stable `morph_*` facades while keeping third-party handles,
+allocators, threads, and platform details host-owned.
+
+Planned capability tiers:
+
+1. **Async HTTP:** libcurl multi-based requests with bounded timeouts,
+   cancellation, response limits, headers, status codes, and polling from the
+   frame loop. No blocking network call may run inside `render_ui`.
+2. **JSON:** yyjson-backed parsing and serialization with request-scoped or
+   arena-owned lifetimes. Generated code should not depend on yyjson internals.
+3. **Persistence:** SQLite-backed app storage with a per-application database,
+   prepared statements, transactions, and migration helpers.
+4. **Compression and assets:** zlib/miniz for cache and bundle compression, plus
+   image loading helpers that produce host-managed Nuklear-compatible assets.
+5. **Utility layer:** configuration parsing, UUIDs, hashing, bounded buffers,
+   regular expressions, and background jobs as demand proves out.
+
+Initial implementation milestones:
+
+- Add `include/morpheus/sdk.h` and versioned capability tables.
+- Vendor/link libcurl and expose an asynchronous HTTP request/poll API.
+- Add deterministic seed-app tests for success, timeout, cancellation, and
+  response-size limits.
+- Add yyjson and a JSON facade after HTTP is stable.
+- Add SQLite persistence and revision-safe database ownership.
+- Add compression/assets only after the memory and lifetime rules are tested.
+
+Raw library APIs may be available to the host implementation, but generated
+modules should use the Morpheus facade. This keeps hot reload safe, makes
+capability policy explicit, and lets the host change library versions without
+breaking every generated app.
+
 ## Generated Module Responsibilities
 
 The replaceable C module owns:
