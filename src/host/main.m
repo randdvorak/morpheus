@@ -21,6 +21,7 @@
 
 #include "runtime_module.h"
 #include "http_service.h"
+#include "image_service.h"
 #include "revision_store.h"
 #include "agent_session.h"
 
@@ -258,6 +259,7 @@ int main(int argc, char **argv)
     morph_revision_store revisions;
     morph_agent_session agent_session;
     morph_http_service *http_service = NULL;
+    morph_image_service *image_service = NULL;
     char module_error[4096] = {0};
     char store_error[4096] = {0};
     char revision_label[128];
@@ -395,6 +397,14 @@ int main(int argc, char **argv)
     host.http = http_service;
     if (!http_service) {
         SDL_Log("HTTP service unavailable; generated app networking disabled");
+    }
+    image_service = morph_image_service_create(
+        (__bridge void *)metal.device,
+        &ctx,
+        http_service);
+    host.images = image_service;
+    if (!image_service) {
+        SDL_Log("Image service unavailable; generated app images disabled");
     }
 
     revision_store_ready = morph_revision_store_init(
@@ -539,6 +549,7 @@ int main(int argc, char **argv)
         nk_input_end(&ctx);
 
         morph_http_service_tick(http_service);
+        morph_image_service_tick(image_service);
         morph_runtime_module_update(&module, &host, dt);
 
         if (nk_begin(&ctx,
@@ -1029,6 +1040,7 @@ int main(int argc, char **argv)
 
     exit_code = EXIT_SUCCESS;
     morph_runtime_module_destroy(&module, &host);
+    morph_image_service_destroy(image_service);
     morph_http_service_destroy(http_service);
     http_service = NULL;
     morph_agent_session_cancel(&agent_session);

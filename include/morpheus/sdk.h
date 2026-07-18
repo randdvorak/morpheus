@@ -33,6 +33,43 @@ void morph_http_cancel(
     morph_http_service *service,
     morph_http_request_id request_id);
 
+typedef struct morph_image_service morph_image_service;
+typedef unsigned long morph_image_id;
+
+typedef enum morph_image_status {
+    MORPH_IMAGE_PENDING = 0,
+    MORPH_IMAGE_READY = 1,
+    MORPH_IMAGE_FAILED = 2
+} morph_image_status;
+
+typedef struct morph_image_result {
+    morph_image_status status;
+    unsigned int width;
+    unsigned int height;
+    const char *error;
+} morph_image_result;
+
+/* Encoded image bytes are copied before this call returns. */
+morph_image_id morph_image_load_memory(
+    morph_image_service *service,
+    const void *data,
+    unsigned long size);
+/* URL loading is asynchronous and uses the host's bounded HTTP service. */
+morph_image_id morph_image_load_url(
+    morph_image_service *service,
+    const char *url);
+int morph_image_poll(
+    morph_image_service *service,
+    morph_image_id image_id,
+    morph_image_result *result);
+/* Draw into the current Nuklear layout cell. Returns zero unless ready. */
+int morph_image_draw(
+    morph_image_service *service,
+    morph_image_id image_id);
+void morph_image_release(
+    morph_image_service *service,
+    morph_image_id image_id);
+
 typedef struct morph_json_document morph_json_document;
 typedef struct morph_json_value morph_json_value;
 typedef struct morph_json_builder morph_json_builder;

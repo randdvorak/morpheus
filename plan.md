@@ -117,6 +117,16 @@ Initial implementation milestones:
 - Add SQLite persistence and revision-safe database ownership.
 - Add compression/assets only after the memory and lifetime rules are tested.
 
+Implemented asset foundation:
+
+- `morph_image_*` exposes opaque, host-owned image IDs for bounded PNG/JPEG
+  decoding from memory or asynchronous HTTP/HTTPS URLs.
+- Encoded inputs are limited to 1 MiB, dimensions to 4096 per axis, decoded
+  images to 16 megapixels, and each host to 64 live image jobs.
+- The macOS backend uploads RGBA pixels to private Metal textures and draws
+  them through the current Nuklear layout cell; generated modules never receive
+  stb or Metal handles and explicitly release image IDs when finished.
+
 Raw library APIs may be available to the host implementation, but generated
 modules should use the Morpheus facade. This keeps hot reload safe, makes
 capability policy explicit, and lets the host change library versions without

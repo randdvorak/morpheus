@@ -3,8 +3,8 @@
 
 #include "morpheus/sdk.h"
 
-#define MORPHEUS_HOST_ABI_VERSION 2u
-#define MORPHEUS_APP_ABI_VERSION 2u
+#define MORPHEUS_HOST_ABI_VERSION 3u
+#define MORPHEUS_APP_ABI_VERSION 3u
 
 #define NK_INCLUDE_FIXED_TYPES
 #define NK_INCLUDE_STANDARD_IO
@@ -34,6 +34,7 @@ struct morph_host {
     int (*ui_button)(morph_host *host, const char *text);
     struct nk_context *nuklear;
     morph_http_service *http;
+    morph_image_service *images;
 };
 
 typedef struct morph_app_api {

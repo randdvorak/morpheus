@@ -85,6 +85,7 @@ int main(void)
         host_label,
         host_button,
         NULL,
+        NULL,
         NULL
     };
 

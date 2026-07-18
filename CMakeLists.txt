@@ -167,6 +167,7 @@ target_compile_options(morpheus_stb_image PRIVATE
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
     src/host/http_service.m
+    src/host/image_service.m
     src/host/json_service.c
     src/agent/agent_session.c
     src/compiler/runtime_module.c
@@ -182,6 +183,8 @@ target_include_directories(morpheus PRIVATE
     "${CMAKE_SOURCE_DIR}/src/agent"
     "${CMAKE_SOURCE_DIR}/src/compiler"
     "${CMAKE_SOURCE_DIR}/src/project"
+    "${CMAKE_SOURCE_DIR}/src/host"
+    "${CMAKE_SOURCE_DIR}/third_party/stb"
     "${CMAKE_SOURCE_DIR}/tinycc"
 )
 
@@ -352,6 +355,32 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_stb_image_test PRIVATE morpheus_stb_image)
     add_test(NAME stb_image COMMAND morpheus_stb_image_test)
+
+    add_executable(morpheus_image_service_test
+        tests/image_service_test.m
+        src/host/image_service.m
+        src/host/http_service.m
+    )
+    target_include_directories(morpheus_image_service_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/host"
+        "${CMAKE_SOURCE_DIR}/third_party/stb"
+    )
+    target_compile_options(morpheus_image_service_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -fobjc-arc
+        -Wno-c23-extensions
+    )
+    target_link_libraries(morpheus_image_service_test PRIVATE
+        morpheus_stb_image
+        "-framework Foundation"
+        "-framework Metal"
+    )
+    add_test(NAME image_service COMMAND morpheus_image_service_test)
+    set_tests_properties(image_service PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
 
     add_executable(morpheus_fake_agent_provider
         tests/fixtures/fake_agent_provider.c
