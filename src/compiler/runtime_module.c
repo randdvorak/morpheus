@@ -70,6 +70,18 @@ static void morph_set_error(
     }
 }
 
+static int morph_fail(
+    morph_runtime_module *module,
+    morph_runtime_stage stage,
+    char *error,
+    unsigned long error_capacity,
+    const char *message)
+{
+    module->last_stage = stage;
+    morph_set_error(error, error_capacity, message);
+    return 0;
+}
+
 static void morph_discard_pending(morph_runtime_module *module)
 {
     if (module->pending_compiler) {
@@ -94,11 +106,16 @@ int morph_runtime_module_compile_candidate(
         error[0] = '\0';
     }
     morph_discard_pending(module);
+    module->last_stage = MORPH_RUNTIME_STAGE_COMPILE;
 
     candidate = tcc_new();
     if (!candidate) {
-        morph_set_error(error, error_capacity, "Unable to create TinyCC state");
-        return 0;
+        return morph_fail(
+            module,
+            MORPH_RUNTIME_STAGE_COMPILE,
+            error,
+            error_capacity,
+            "Unable to create TinyCC state");
     }
 
     tcc_set_error_func(candidate, &sink, morph_tcc_error);
@@ -110,9 +127,11 @@ int morph_runtime_module_compile_candidate(
         tcc_add_file(candidate, source_path) < 0 ||
         tcc_relocate(candidate) < 0) {
         tcc_delete(candidate);
+        module->last_stage = MORPH_RUNTIME_STAGE_COMPILE;
         return 0;
     }
 
+    module->last_stage = MORPH_RUNTIME_STAGE_VALIDATE;
     entry = (morph_app_entry_fn)tcc_get_symbol(candidate, "morph_app_entry");
     if (!entry) {
         morph_set_error(
@@ -140,17 +159,64 @@ int morph_runtime_module_compile_candidate(
     return 1;
 }
 
-int morph_runtime_module_activate_candidate(
+int morph_runtime_module_capture_state(
     morph_runtime_module *module,
     morph_host *host,
+    const void **state_data,
+    unsigned long *state_size,
+    char *error,
+    unsigned long error_capacity)
+{
+    if (error && error_capacity) {
+        error[0] = '\0';
+    }
+    if (!state_data || !state_size) {
+        return morph_fail(
+            module,
+            MORPH_RUNTIME_STAGE_SAVE_STATE,
+            error,
+            error_capacity,
+            "State output arguments are required");
+    }
+
+    *state_data = NULL;
+    *state_size = 0;
+    if (module->api && module->api->save_state &&
+        !module->api->save_state(
+            host,
+            module->state,
+            state_data,
+            state_size)) {
+        return morph_fail(
+            module,
+            MORPH_RUNTIME_STAGE_SAVE_STATE,
+            error,
+            error_capacity,
+            "Active module state save failed");
+    }
+    if (*state_size && !*state_data) {
+        return morph_fail(
+            module,
+            MORPH_RUNTIME_STAGE_SAVE_STATE,
+            error,
+            error_capacity,
+            "Active module returned invalid state");
+    }
+    return 1;
+}
+
+static int morph_activate_candidate(
+    morph_runtime_module *module,
+    morph_host *host,
+    const void *saved_data,
+    unsigned long saved_size,
+    int use_explicit_state,
     char *error,
     unsigned long error_capacity)
 {
     TCCState *candidate;
     const morph_app_api *candidate_api;
     void *candidate_state = NULL;
-    const void *saved_data = NULL;
-    unsigned long saved_size = 0;
     TCCState *previous_compiler;
     const morph_app_api *previous_api;
     void *previous_state;
@@ -159,38 +225,54 @@ int morph_runtime_module_activate_candidate(
         error[0] = '\0';
     }
     if (!module->pending_compiler || !module->pending_api) {
-        morph_set_error(error, error_capacity, "No compiled candidate is pending");
-        return 0;
+        return morph_fail(
+            module,
+            MORPH_RUNTIME_STAGE_VALIDATE,
+            error,
+            error_capacity,
+            "No compiled candidate is pending");
     }
 
     candidate = (TCCState *)module->pending_compiler;
     candidate_api = module->pending_api;
 
-    if (module->api && module->api->save_state &&
-        !module->api->save_state(
-            host,
-            module->state,
-            &saved_data,
-            &saved_size)) {
-        morph_set_error(error, error_capacity, "Active module state save failed");
+    if (!use_explicit_state) {
+        module->last_stage = MORPH_RUNTIME_STAGE_SAVE_STATE;
+        if (!morph_runtime_module_capture_state(
+                module,
+                host,
+                &saved_data,
+                &saved_size,
+                error,
+                error_capacity)) {
+            morph_discard_pending(module);
+            return 0;
+        }
+    } else if (saved_size && !saved_data) {
         morph_discard_pending(module);
-        return 0;
-    }
-    if (saved_size && !saved_data) {
-        morph_set_error(error, error_capacity, "Active module returned invalid state");
-        morph_discard_pending(module);
-        return 0;
+        return morph_fail(
+            module,
+            MORPH_RUNTIME_STAGE_SAVE_STATE,
+            error,
+            error_capacity,
+            "Rollback state is invalid");
     }
 
+    module->last_stage = MORPH_RUNTIME_STAGE_INITIALIZE;
     if (candidate_api->create &&
         !candidate_api->create(host, &candidate_state)) {
-        morph_set_error(error, error_capacity, "Candidate initialization failed");
         morph_release_candidate(candidate, candidate_api, host, candidate_state);
         module->pending_compiler = NULL;
         module->pending_api = NULL;
-        return 0;
+        return morph_fail(
+            module,
+            MORPH_RUNTIME_STAGE_INITIALIZE,
+            error,
+            error_capacity,
+            "Candidate initialization failed");
     }
 
+    module->last_stage = MORPH_RUNTIME_STAGE_MIGRATE;
     if (saved_size &&
         (!candidate_api->load_state ||
          !candidate_api->load_state(
@@ -198,11 +280,15 @@ int morph_runtime_module_activate_candidate(
             &candidate_state,
             saved_data,
             saved_size))) {
-        morph_set_error(error, error_capacity, "Candidate state migration failed");
         morph_release_candidate(candidate, candidate_api, host, candidate_state);
         module->pending_compiler = NULL;
         module->pending_api = NULL;
-        return 0;
+        return morph_fail(
+            module,
+            MORPH_RUNTIME_STAGE_MIGRATE,
+            error,
+            error_capacity,
+            "Candidate state migration failed");
     }
 
     previous_compiler = (TCCState *)module->compiler;
@@ -220,12 +306,61 @@ int morph_runtime_module_activate_candidate(
         previous_api,
         host,
         previous_state);
+    module->last_stage = MORPH_RUNTIME_STAGE_ACTIVE;
     return 1;
+}
+
+int morph_runtime_module_activate_candidate(
+    morph_runtime_module *module,
+    morph_host *host,
+    char *error,
+    unsigned long error_capacity)
+{
+    return morph_activate_candidate(
+        module,
+        host,
+        NULL,
+        0,
+        0,
+        error,
+        error_capacity);
+}
+
+int morph_runtime_module_activate_candidate_with_state(
+    morph_runtime_module *module,
+    morph_host *host,
+    const void *state_data,
+    unsigned long state_size,
+    char *error,
+    unsigned long error_capacity)
+{
+    return morph_activate_candidate(
+        module,
+        host,
+        state_data,
+        state_size,
+        1,
+        error,
+        error_capacity);
 }
 
 int morph_runtime_module_has_candidate(const morph_runtime_module *module)
 {
     return module->pending_compiler != NULL;
+}
+
+const char *morph_runtime_stage_name(morph_runtime_stage stage)
+{
+    switch (stage) {
+    case MORPH_RUNTIME_STAGE_IDLE: return "idle";
+    case MORPH_RUNTIME_STAGE_COMPILE: return "compile";
+    case MORPH_RUNTIME_STAGE_VALIDATE: return "validate";
+    case MORPH_RUNTIME_STAGE_SAVE_STATE: return "save-state";
+    case MORPH_RUNTIME_STAGE_INITIALIZE: return "initialize";
+    case MORPH_RUNTIME_STAGE_MIGRATE: return "migrate";
+    case MORPH_RUNTIME_STAGE_ACTIVE: return "active";
+    default: return "unknown";
+    }
 }
 
 int morph_runtime_module_reload(

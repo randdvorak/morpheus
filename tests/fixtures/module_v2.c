@@ -13,7 +13,10 @@ static int create(morph_host *host, void **state)
 static void render(morph_host *host, void *state)
 {
     int value = *(int *)state;
-    host->ui_label(host, value == 41 ? "version two: migrated 41" : "version two: bad");
+    const char *label = "version two: bad";
+    if (value == 41) label = "version two: migrated 41";
+    else if (value == 17) label = "version two: restored 17";
+    host->ui_label(host, label);
 }
 
 static int load_state(

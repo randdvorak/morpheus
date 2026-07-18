@@ -56,6 +56,7 @@ add_dependencies(morpheus_libtcc morpheus_tinycc)
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
     src/compiler/runtime_module.c
+    src/project/revision_store.c
 )
 add_dependencies(morpheus morpheus_tinycc)
 
@@ -64,6 +65,7 @@ target_include_directories(morpheus PRIVATE
     "${CMAKE_SOURCE_DIR}/Nuklear"
     "${CMAKE_SOURCE_DIR}/Nuklear/demo/metal"
     "${CMAKE_SOURCE_DIR}/src/compiler"
+    "${CMAKE_SOURCE_DIR}/src/project"
     "${CMAKE_SOURCE_DIR}/tinycc"
 )
 
@@ -140,6 +142,20 @@ if(BUILD_TESTING)
         morpheus_libtcc
     )
     add_test(NAME runtime_reload COMMAND morpheus_runtime_reload_test)
+
+    add_executable(morpheus_revision_store_test
+        tests/revision_store_test.c
+        src/project/revision_store.c
+    )
+    target_include_directories(morpheus_revision_store_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/project"
+    )
+    target_compile_options(morpheus_revision_store_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    add_test(NAME revision_store COMMAND morpheus_revision_store_test)
 
     add_custom_target(morpheus_hardened_runtime_check
         COMMAND "${MORPHEUS_CODESIGN_EXECUTABLE}"

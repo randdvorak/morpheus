@@ -19,6 +19,7 @@
 #include "nuklear_metal.h"
 
 #include "runtime_module.h"
+#include "revision_store.h"
 
 #define WINDOW_WIDTH 1200
 #define WINDOW_HEIGHT 800
@@ -158,6 +159,54 @@ static void clipboard_copy(nk_handle user, const char *text, int length)
     SDL_free(copy);
 }
 
+static int checkpoint_active_module(
+    morph_revision_store *store,
+    morph_runtime_module *module,
+    morph_host *host,
+    const char *source_path,
+    char *error,
+    unsigned long error_capacity)
+{
+    const void *state_data;
+    unsigned long state_size;
+
+    if (!morph_runtime_module_capture_state(
+            module,
+            host,
+            &state_data,
+            &state_size,
+            error,
+            error_capacity)) {
+        return 0;
+    }
+    return morph_revision_store_checkpoint(
+        store,
+        source_path,
+        state_data,
+        state_size,
+        NULL,
+        error,
+        error_capacity);
+}
+
+static void record_reload_attempt(
+    const morph_revision_store *store,
+    const morph_runtime_module *module,
+    int succeeded,
+    const char *message)
+{
+    char error[512];
+    if (!morph_revision_store_record_attempt(
+            store,
+            morph_runtime_stage_name(module->last_stage),
+            succeeded,
+            message,
+            error,
+            sizeof(error))) {
+        SDL_Log("Unable to record reload attempt: %s", error);
+    }
+}
+
 int main(int argc, char **argv)
 {
     SDL_Window *window = NULL;
@@ -171,13 +220,20 @@ int main(int argc, char **argv)
     morph_ui_context ui;
     morph_host host;
     morph_runtime_module module;
+    morph_revision_store revisions;
     char module_error[4096] = {0};
+    char store_error[4096] = {0};
+    char revision_label[128];
     const char *module_source = MORPHEUS_SOURCE_ROOT "/generated/app.c";
+    const char *workspace_root = MORPHEUS_SOURCE_ROOT "/generated";
     const void *pixels;
     int atlas_width;
     int atlas_height;
     int running = 1;
     int reload_requested = 0;
+    int rollback_requested = 0;
+    int revision_store_ready = 0;
+    int recovered_from_crash = 0;
     int exit_code = EXIT_FAILURE;
     float font_scale;
     Uint64 previous_ticks;
@@ -246,13 +302,102 @@ int main(int argc, char **argv)
     host.ui_label = host_ui_label;
     host.ui_button = host_ui_button;
 
-    if (!morph_runtime_module_reload(
+    revision_store_ready = morph_revision_store_init(
+        &revisions,
+        workspace_root,
+        store_error,
+        sizeof(store_error));
+    if (revision_store_ready) {
+        revision_store_ready = morph_revision_store_begin_session(
+            &revisions,
+            &recovered_from_crash,
+            store_error,
+            sizeof(store_error));
+    }
+    if (!revision_store_ready) {
+        SDL_Log("Revision store unavailable: %s", store_error);
+    } else if (recovered_from_crash) {
+        SDL_Log(
+            "Previous generated application exited abnormally; rolled back to revision %lu",
+            revisions.active_revision);
+        (void)morph_revision_store_record_attempt(
+            &revisions,
+            "startup",
+            0,
+            "abnormal exit detected; automatic rollback",
+            store_error,
+            sizeof(store_error));
+    }
+
+    if (revision_store_ready && revisions.active_revision) {
+        char accepted_source[MORPH_REVISION_PATH_CAPACITY];
+        void *accepted_state = NULL;
+        unsigned long accepted_state_size = 0;
+        int accepted_loaded = morph_revision_store_load(
+                &revisions,
+                revisions.active_revision,
+                accepted_source,
+                sizeof(accepted_source),
+                &accepted_state,
+                &accepted_state_size,
+                module_error,
+                sizeof(module_error)) &&
+            morph_runtime_module_compile_candidate(
+                &module,
+                accepted_source,
+                module_error,
+                sizeof(module_error)) &&
+            morph_runtime_module_activate_candidate_with_state(
+                &module,
+                &host,
+                accepted_state,
+                accepted_state_size,
+                module_error,
+                sizeof(module_error));
+        morph_revision_store_release_state(accepted_state);
+        record_reload_attempt(&revisions, &module, accepted_loaded, module_error);
+        if (!accepted_loaded) {
+            SDL_Log("Accepted revision failed; entering safe mode: %s", module_error);
+            (void)morph_revision_store_set_active(
+                &revisions,
+                0,
+                store_error,
+                sizeof(store_error));
+            (void)morph_revision_store_refresh_session(
+                &revisions,
+                store_error,
+                sizeof(store_error));
+        }
+    }
+
+    if (!module.api) {
+        int initial_loaded = morph_runtime_module_reload(
             &module,
             &host,
             module_source,
             module_error,
-            sizeof(module_error))) {
-        SDL_Log("Initial module failed: %s", module_error);
+            sizeof(module_error));
+        if (revision_store_ready) {
+            record_reload_attempt(&revisions, &module, initial_loaded, module_error);
+        }
+        if (!initial_loaded) {
+            SDL_Log("Initial module failed: %s", module_error);
+        } else if (revision_store_ready &&
+            !checkpoint_active_module(
+                &revisions,
+                &module,
+                &host,
+                module_source,
+                module_error,
+                sizeof(module_error))) {
+            SDL_Log("Initial checkpoint failed: %s", module_error);
+        } else if (revision_store_ready &&
+            !morph_revision_store_refresh_session(
+                &revisions,
+                store_error,
+                sizeof(store_error))) {
+            SDL_Log("Unable to arm crash recovery: %s", store_error);
+        }
     }
 
     previous_ticks = SDL_GetTicksNS();
@@ -282,7 +427,7 @@ int main(int argc, char **argv)
 
         if (nk_begin(&ctx,
                 "Morpheus Host",
-                nk_rect(30, 30, 430, 260),
+                nk_rect(30, 30, 430, 360),
                 NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE |
                 NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
             nk_layout_row_dynamic(&ctx, 28.0f, 1);
@@ -293,10 +438,30 @@ int main(int argc, char **argv)
             if (module.api && module.api->name) {
                 nk_label(&ctx, module.api->name, NK_TEXT_LEFT);
             }
+            if (revision_store_ready) {
+                snprintf(
+                    revision_label,
+                    sizeof(revision_label),
+                    "Accepted revision: %lu",
+                    revisions.active_revision);
+                nk_label(&ctx, revision_label, NK_TEXT_LEFT);
+                if (recovered_from_crash) {
+                    nk_label(
+                        &ctx,
+                        "Safe mode: previous revision exited abnormally",
+                        NK_TEXT_LEFT);
+                }
+            }
 
             nk_layout_row_dynamic(&ctx, 34.0f, 1);
             if (nk_button_label(&ctx, "Recompile generated/app.c")) {
                 reload_requested = 1;
+            }
+            if (revision_store_ready && revisions.active_revision > 1) {
+                nk_layout_row_dynamic(&ctx, 34.0f, 1);
+                if (nk_button_label(&ctx, "Rollback previous revision")) {
+                    rollback_requested = 1;
+                }
             }
 
             if (module_error[0]) {
@@ -327,9 +492,59 @@ int main(int argc, char **argv)
                 NK_ANTI_ALIASING_ON);
         }
 
-        if (reload_requested) {
+        if (rollback_requested) {
+            char rollback_source[MORPH_REVISION_PATH_CAPACITY];
+            void *rollback_state = NULL;
+            unsigned long rollback_state_size = 0;
+            unsigned long rollback_revision = 0;
+            int rollback_succeeded;
+
+            rollback_requested = 0;
+            rollback_succeeded =
+                morph_revision_store_previous(&revisions, &rollback_revision) &&
+                morph_revision_store_load(
+                    &revisions,
+                    rollback_revision,
+                    rollback_source,
+                    sizeof(rollback_source),
+                    &rollback_state,
+                    &rollback_state_size,
+                    module_error,
+                    sizeof(module_error)) &&
+                morph_runtime_module_compile_candidate(
+                    &module,
+                    rollback_source,
+                    module_error,
+                    sizeof(module_error)) &&
+                morph_runtime_module_activate_candidate_with_state(
+                    &module,
+                    &host,
+                    rollback_state,
+                    rollback_state_size,
+                    module_error,
+                    sizeof(module_error)) &&
+                morph_revision_store_set_active(
+                    &revisions,
+                    rollback_revision,
+                    module_error,
+                    sizeof(module_error)) &&
+                morph_revision_store_refresh_session(
+                    &revisions,
+                    module_error,
+                    sizeof(module_error));
+            morph_revision_store_release_state(rollback_state);
+            record_reload_attempt(
+                &revisions,
+                &module,
+                rollback_succeeded,
+                module_error);
+            if (rollback_succeeded) {
+                module_error[0] = '\0';
+            }
+        } else if (reload_requested) {
+            int reload_succeeded;
             reload_requested = 0;
-            if (morph_runtime_module_compile_candidate(
+            reload_succeeded = morph_runtime_module_compile_candidate(
                     &module,
                     module_source,
                     module_error,
@@ -338,7 +553,28 @@ int main(int argc, char **argv)
                     &module,
                     &host,
                     module_error,
-                    sizeof(module_error))) {
+                    sizeof(module_error));
+            if (revision_store_ready) {
+                record_reload_attempt(
+                    &revisions,
+                    &module,
+                    reload_succeeded,
+                    module_error);
+            }
+            if (reload_succeeded && revision_store_ready) {
+                reload_succeeded = checkpoint_active_module(
+                    &revisions,
+                    &module,
+                    &host,
+                    module_source,
+                    module_error,
+                    sizeof(module_error)) &&
+                    morph_revision_store_refresh_session(
+                        &revisions,
+                        module_error,
+                        sizeof(module_error));
+            }
+            if (reload_succeeded) {
                 module_error[0] = '\0';
             }
         }
@@ -346,6 +582,13 @@ int main(int argc, char **argv)
 
     exit_code = EXIT_SUCCESS;
     morph_runtime_module_destroy(&module, &host);
+    if (revision_store_ready &&
+        !morph_revision_store_end_session(
+            &revisions,
+            store_error,
+            sizeof(store_error))) {
+        SDL_Log("Unable to close revision session: %s", store_error);
+    }
     SDL_StopTextInput(window);
     nk_font_atlas_clear(&atlas);
     nk_free(&ctx);
