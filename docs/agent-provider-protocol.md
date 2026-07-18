@@ -51,6 +51,12 @@ a JSON schema requiring complete `source` and `summary` strings. The candidate
 is replaced atomically only after that structured response validates. The raw
 request and response remain in the run directory for diagnosis.
 
+The version-controlled system prompt is
+`tools/morpheus-ollama-system-prompt.txt`. The adapter appends the exact
+per-run `app_api.h` to it, so the model receives the authoritative host
+capabilities instead of guessing or asking which API is available. Set
+`MORPHEUS_OLLAMA_SYSTEM_PROMPT` to use a different prompt file.
+
 Configuration environment variables:
 
 - `MORPHEUS_AGENT_BACKEND=ollama` starts Morpheus with Ollama selected.
@@ -58,6 +64,7 @@ Configuration environment variables:
 - `MORPHEUS_OLLAMA_URL` overrides the default localhost server.
 - `MORPHEUS_OLLAMA_KEEP_ALIVE` defaults to `10m`.
 - `MORPHEUS_OLLAMA_TIMEOUT` defaults to 600 seconds.
+- `MORPHEUS_OLLAMA_SYSTEM_PROMPT` overrides the system-prompt file.
 
 See Ollama's [API introduction](https://docs.ollama.com/api/introduction),
 [model listing](https://docs.ollama.com/api/tags), and

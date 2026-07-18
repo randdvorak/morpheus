@@ -17,7 +17,12 @@ case "$url" in
     */api/chat)
         if [ -z "$request_path" ] ||
             ! /usr/bin/jq -e \
-                '.model == "fake-coder:latest" and .stream == false and .format.type == "object"' \
+                '.model == "fake-coder:latest" and
+                 .stream == false and
+                 .format.type == "object" and
+                 (.messages[0].content | contains("Do not ask follow-up questions")) and
+                 (.messages[0].content | contains("ui_label")) and
+                 (.messages[1].content | contains("Current candidate.c"))' \
                 "$request_path" >/dev/null; then
             echo "invalid Ollama request" >&2
             exit 22

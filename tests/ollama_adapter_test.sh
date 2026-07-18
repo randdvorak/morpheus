@@ -7,6 +7,9 @@ workspace=$(mktemp -d /private/tmp/morpheus-ollama-adapter-XXXXXX)
 trap '/bin/rm -rf "$workspace"' EXIT
 
 printf '%s\n' 'int original_candidate;' > "$workspace/candidate.c"
+printf '%s\n' \
+    'typedef struct morph_host { void (*ui_label)(struct morph_host *, const char *); } morph_host;' \
+    > "$workspace/app_api.h"
 : > "$workspace/model.txt"
 printf '%s\n' 'Replace the candidate for this test.' > "$workspace/prompt.txt"
 : > "$workspace/diagnostics.txt"
