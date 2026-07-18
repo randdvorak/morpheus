@@ -64,14 +64,19 @@ initialization, input, conversion, clearing, and shutdown remain host-owned.
 
 `tools/morpheus-ollama-agent` connects to Ollama's native API at
 `http://localhost:11434` by default. Select **Provider: Ollama** in Morpheus and
-optionally enter an installed model name. A blank model selects the first model
-returned by `/api/tags`. Start the service with `ollama serve` and install a
+optionally enter an installed model name. A blank model selects the first
+installed non-cloud model returned by `/api/tags` (falling back to the first
+model only when no local model exists). Start the service with `ollama serve` and install a
 coding-capable model with `ollama pull <model>`.
 
 The adapter sends a non-streaming `/api/chat` request with temperature zero and
 a JSON schema requiring complete `source` and `summary` strings. The candidate
 is replaced atomically only after that structured response validates. The raw
 request and response remain in the run directory for diagnosis.
+
+If a model ignores the schema and returns a fenced or raw complete C source
+response, the adapter safely extracts it when `morph_app_entry` is present;
+arbitrary prose is still rejected.
 
 The version-controlled system prompt is
 `tools/morpheus-ollama-system-prompt.txt`. The adapter appends the exact

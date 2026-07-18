@@ -20,6 +20,7 @@ api_path=$workspace/app_api.h
 request_path=$workspace/ollama-request.json
 raw_response_path=$workspace/ollama-response.json
 candidate_temporary=$workspace/candidate.c.ollama.tmp
+content_path=$workspace/ollama-content.txt
 
 if [ ! -x "$curl_executable" ] || [ ! -x "$jq_executable" ]; then
     echo "Ollama provider requires executable curl and jq commands" >&2
@@ -46,7 +47,10 @@ if [ -z "$model" ]; then
         echo "Unable to reach Ollama at $ollama_url. Start it with: ollama serve" >&2
         exit 69
     }
-    model=$(printf '%s' "$tags" | "$jq_executable" -er '.models[0].name // .models[0].model // empty') || {
+    model=$(printf '%s' "$tags" | "$jq_executable" -er '
+        ([.models[] | (.name // .model) | select(type == "string" and (contains(":cloud") | not))][0] //
+         [.models[] | (.name // .model)][0] // empty)
+    ') || {
         echo "Ollama has no installed models. Install one with: ollama pull <model>" >&2
         exit 69
     }
@@ -99,16 +103,43 @@ if ! "$curl_executable" \
     exit 70
 fi
 
-if ! "$jq_executable" -er \
+if "$jq_executable" -er \
     '.message.content | fromjson | .source | select(type == "string" and length > 0)' \
-    "$raw_response_path" > "$candidate_temporary"; then
-    echo "Ollama returned no valid candidate source" >&2
-    exit 65
+    "$raw_response_path" > "$candidate_temporary" 2>/dev/null; then
+    "$jq_executable" -er \
+        '.message.content | fromjson | .summary // "Ollama updated candidate.c"' \
+        "$raw_response_path" > "$response_path"
+else
+    "$jq_executable" -er '.message.content | select(type == "string" and length > 0)' \
+        "$raw_response_path" > "$content_path" || {
+        echo "Ollama returned no message content" >&2
+        exit 65
+    }
+    if /usr/bin/awk '
+        BEGIN { inside = 0; found = 0 }
+        /^```/ {
+            if (!inside) { inside = 1; found = 1; next }
+            inside = 0
+            exit
+        }
+        inside { print }
+        END { if (!found || inside) exit 1 }
+    ' "$content_path" > "$candidate_temporary"; then
+        printf '%s\n' 'Ollama returned fenced source; extracted the complete candidate.c.' > "$response_path"
+    elif /usr/bin/grep -q 'morph_app_entry' "$content_path" &&
+        /usr/bin/grep -q '#include' "$content_path"; then
+        /bin/cp "$content_path" "$candidate_temporary"
+        printf '%s\n' 'Ollama returned raw source; accepted the complete candidate.c.' > "$response_path"
+    else
+        echo "Ollama returned content that was neither JSON nor complete C source" >&2
+        exit 65
+    fi
 fi
 
-"$jq_executable" -er \
-    '.message.content | fromjson | .summary // "Ollama updated candidate.c"' \
-    "$raw_response_path" > "$response_path"
+if ! /usr/bin/grep -q 'morph_app_entry' "$candidate_temporary"; then
+    echo "Ollama candidate is missing morph_app_entry" >&2
+    exit 65
+fi
 /bin/mv "$candidate_temporary" "$candidate_path"
 
 : "$diagnostics_path"

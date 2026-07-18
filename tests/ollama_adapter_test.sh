@@ -25,4 +25,14 @@ MORPHEUS_OLLAMA_URL=http://localhost:11434 \
 /usr/bin/grep -q 'repaired_by_ollama' "$workspace/candidate.c"
 /usr/bin/grep -q 'local model updated candidate' "$workspace/response.txt"
 /usr/bin/jq -e '.model == "fake-coder:latest"' "$workspace/ollama-request.json" >/dev/null
+FAKE_OLLAMA_FENCED=1 \
+MORPHEUS_CURL_EXECUTABLE=$fake_curl \
+MORPHEUS_OLLAMA_URL=http://localhost:11434 \
+    "$adapter" \
+    "$workspace" \
+    "$workspace/prompt.txt" \
+    "$workspace/diagnostics.txt" \
+    "$workspace/fenced-response.txt"
+/usr/bin/grep -q 'morph_app_entry' "$workspace/candidate.c"
+/usr/bin/grep -q 'fenced source' "$workspace/fenced-response.txt"
 printf '%s\n' 'PASS: Ollama model discovery, structured request, and candidate extraction'
