@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+workspace=$1
+prompt_path=$2
+diagnostics_path=$3
+response_path=$4
+codex_executable=${MORPHEUS_CODEX_EXECUTABLE:-/Applications/ChatGPT.app/Contents/Resources/codex}
+
+if [ ! -x "$codex_executable" ]; then
+    echo "Codex CLI is not available at $codex_executable" >&2
+    exit 127
+fi
+
+# Anchor Codex repository discovery at this isolated run directory.
+/usr/bin/git -C "$workspace" init -q
+
+/bin/cat "$prompt_path" | "$codex_executable" exec \
+    --ephemeral \
+    --ignore-user-config \
+    --ignore-rules \
+    --sandbox workspace-write \
+    --ask-for-approval never \
+    --skip-git-repo-check \
+    --color never \
+    -C "$workspace" \
+    --output-last-message "$response_path" \
+    -
+
+: "$diagnostics_path"

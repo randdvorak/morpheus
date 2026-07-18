@@ -12,6 +12,12 @@ include(ExternalProject)
 find_program(MORPHEUS_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
 find_program(MORPHEUS_PATCH_EXECUTABLE NAMES patch REQUIRED)
 find_program(MORPHEUS_CODESIGN_EXECUTABLE NAMES codesign REQUIRED)
+set(
+    MORPHEUS_AGENT_PROVIDER
+    "${CMAKE_SOURCE_DIR}/tools/morpheus-codex-agent"
+    CACHE FILEPATH
+    "Executable implementing the Morpheus external coding-agent protocol"
+)
 
 set(SDL_SHARED OFF CACHE BOOL "Build SDL as a shared library" FORCE)
 set(SDL_STATIC ON CACHE BOOL "Build SDL as a static library" FORCE)
@@ -55,6 +61,7 @@ add_dependencies(morpheus_libtcc morpheus_tinycc)
 
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
+    src/agent/agent_session.c
     src/compiler/runtime_module.c
     src/project/revision_store.c
 )
@@ -64,6 +71,7 @@ target_include_directories(morpheus PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/Nuklear"
     "${CMAKE_SOURCE_DIR}/Nuklear/demo/metal"
+    "${CMAKE_SOURCE_DIR}/src/agent"
     "${CMAKE_SOURCE_DIR}/src/compiler"
     "${CMAKE_SOURCE_DIR}/src/project"
     "${CMAKE_SOURCE_DIR}/tinycc"
@@ -71,6 +79,7 @@ target_include_directories(morpheus PRIVATE
 
 target_compile_definitions(morpheus PRIVATE
     MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+    MORPHEUS_AGENT_PROVIDER_PATH="${MORPHEUS_AGENT_PROVIDER}"
     MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
 )
 
@@ -156,6 +165,79 @@ if(BUILD_TESTING)
         -Wpedantic
     )
     add_test(NAME revision_store COMMAND morpheus_revision_store_test)
+
+    add_executable(morpheus_fake_agent_provider
+        tests/fixtures/fake_agent_provider.c
+    )
+    target_compile_options(morpheus_fake_agent_provider PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+
+    add_executable(morpheus_agent_session_test
+        tests/agent_session_test.c
+        src/agent/agent_session.c
+    )
+    target_include_directories(morpheus_agent_session_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/agent"
+    )
+    target_compile_definitions(morpheus_agent_session_test PRIVATE
+        MORPHEUS_FAKE_AGENT_PATH="$<TARGET_FILE:morpheus_fake_agent_provider>"
+    )
+    target_compile_options(morpheus_agent_session_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    add_dependencies(morpheus_agent_session_test morpheus_fake_agent_provider)
+    add_test(NAME agent_session COMMAND morpheus_agent_session_test)
+
+    add_executable(morpheus_fake_repair_agent_provider
+        tests/fixtures/fake_repair_agent_provider.c
+    )
+    target_compile_definitions(morpheus_fake_repair_agent_provider PRIVATE
+        MORPHEUS_VALID_MODULE="${CMAKE_SOURCE_DIR}/tests/fixtures/module_v1.c"
+        MORPHEUS_INVALID_MODULE="${CMAKE_SOURCE_DIR}/tests/fixtures/module_compile_error.c"
+    )
+    target_compile_options(morpheus_fake_repair_agent_provider PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+
+    add_executable(morpheus_agent_repair_loop_test
+        tests/agent_repair_loop_test.c
+        src/agent/agent_session.c
+        src/compiler/runtime_module.c
+    )
+    add_dependencies(
+        morpheus_agent_repair_loop_test
+        morpheus_tinycc
+        morpheus_fake_repair_agent_provider
+    )
+    target_include_directories(morpheus_agent_repair_loop_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/src/agent"
+        "${CMAKE_SOURCE_DIR}/src/compiler"
+        "${CMAKE_SOURCE_DIR}/tinycc"
+    )
+    target_compile_definitions(morpheus_agent_repair_loop_test PRIVATE
+        MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+        MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
+        MORPHEUS_REPAIR_AGENT_PATH="$<TARGET_FILE:morpheus_fake_repair_agent_provider>"
+        MORPHEUS_VALID_MODULE="${CMAKE_SOURCE_DIR}/tests/fixtures/module_v1.c"
+        MORPHEUS_API_HEADER="${CMAKE_SOURCE_DIR}/include/morpheus/app_api.h"
+    )
+    target_compile_options(morpheus_agent_repair_loop_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_agent_repair_loop_test PRIVATE
+        morpheus_libtcc
+    )
+    add_test(NAME agent_repair_loop COMMAND morpheus_agent_repair_loop_test)
 
     add_custom_target(morpheus_hardened_runtime_check
         COMMAND "${MORPHEUS_CODESIGN_EXECUTABLE}"

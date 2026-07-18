@@ -20,6 +20,7 @@
 
 #include "runtime_module.h"
 #include "revision_store.h"
+#include "agent_session.h"
 
 #define WINDOW_WIDTH 1200
 #define WINDOW_HEIGHT 800
@@ -207,6 +208,38 @@ static void record_reload_attempt(
     }
 }
 
+static int copy_runtime_state(
+    morph_runtime_module *module,
+    morph_host *host,
+    void **state_copy,
+    unsigned long *state_size,
+    char *error,
+    unsigned long error_capacity)
+{
+    const void *state_data = NULL;
+
+    *state_copy = NULL;
+    *state_size = 0;
+    if (!morph_runtime_module_capture_state(
+            module,
+            host,
+            &state_data,
+            state_size,
+            error,
+            error_capacity)) {
+        return 0;
+    }
+    if (*state_size) {
+        *state_copy = malloc((size_t)*state_size);
+        if (!*state_copy) {
+            snprintf(error, (size_t)error_capacity, "Unable to preserve preview rollback state");
+            return 0;
+        }
+        memcpy(*state_copy, state_data, (size_t)*state_size);
+    }
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     SDL_Window *window = NULL;
@@ -221,19 +254,32 @@ int main(int argc, char **argv)
     morph_host host;
     morph_runtime_module module;
     morph_revision_store revisions;
+    morph_agent_session agent_session;
     char module_error[4096] = {0};
     char store_error[4096] = {0};
     char revision_label[128];
-    const char *module_source = MORPHEUS_SOURCE_ROOT "/generated/app.c";
-    const char *workspace_root = MORPHEUS_SOURCE_ROOT "/generated";
+    char agent_request[MORPH_AGENT_REQUEST_CAPACITY] = {0};
+    char agent_status[256] = "Agent ready";
+    char agent_root[MORPH_AGENT_PATH_CAPACITY];
+    const char *agent_provider_path;
+    const char *module_source;
+    const char *workspace_root;
     const void *pixels;
     int atlas_width;
     int atlas_height;
     int running = 1;
     int reload_requested = 0;
     int rollback_requested = 0;
+    int agent_request_length = 0;
+    int agent_submit_requested = 0;
+    int agent_accept_requested = 0;
+    int agent_reject_requested = 0;
+    int agent_ready = 0;
+    int agent_preview_active = 0;
     int revision_store_ready = 0;
     int recovered_from_crash = 0;
+    void *preview_restore_state = NULL;
+    unsigned long preview_restore_state_size = 0;
     int exit_code = EXIT_FAILURE;
     float font_scale;
     Uint64 previous_ticks;
@@ -241,7 +287,22 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
+    module_source = getenv("MORPHEUS_MODULE_SOURCE");
+    if (!module_source || !*module_source) {
+        module_source = MORPHEUS_SOURCE_ROOT "/generated/app.c";
+    }
+    workspace_root = getenv("MORPHEUS_WORKSPACE_ROOT");
+    if (!workspace_root || !*workspace_root) {
+        workspace_root = MORPHEUS_SOURCE_ROOT "/generated";
+    }
+    agent_provider_path = getenv("MORPHEUS_AGENT_PROVIDER");
+    if (!agent_provider_path || !*agent_provider_path) {
+        agent_provider_path = MORPHEUS_AGENT_PROVIDER_PATH;
+    }
+    snprintf(agent_root, sizeof(agent_root), "%s/agent", workspace_root);
+
     morph_runtime_module_init(&module);
+    morph_agent_session_reset(&agent_session);
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
@@ -327,6 +388,20 @@ int main(int argc, char **argv)
             "abnormal exit detected; automatic rollback",
             store_error,
             sizeof(store_error));
+    }
+
+    agent_ready = revision_store_ready && morph_agent_session_init(
+            &agent_session,
+            agent_root,
+            agent_provider_path,
+            store_error,
+            sizeof(store_error));
+    if (!agent_ready) {
+        snprintf(
+            agent_status,
+            sizeof(agent_status),
+            "Agent unavailable: %.220s",
+            revision_store_ready ? store_error : "revision store is required");
     }
 
     if (revision_store_ready && revisions.active_revision) {
@@ -427,7 +502,7 @@ int main(int argc, char **argv)
 
         if (nk_begin(&ctx,
                 "Morpheus Host",
-                nk_rect(30, 30, 430, 360),
+                nk_rect(30, 30, 430, 540),
                 NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE |
                 NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
             nk_layout_row_dynamic(&ctx, 28.0f, 1);
@@ -454,13 +529,50 @@ int main(int argc, char **argv)
             }
 
             nk_layout_row_dynamic(&ctx, 34.0f, 1);
-            if (nk_button_label(&ctx, "Recompile generated/app.c")) {
+            if (!agent_preview_active &&
+                agent_session.status != MORPH_AGENT_RUNNING &&
+                nk_button_label(&ctx, "Recompile generated/app.c")) {
                 reload_requested = 1;
             }
-            if (revision_store_ready && revisions.active_revision > 1) {
+            if (!agent_preview_active &&
+                agent_session.status != MORPH_AGENT_RUNNING &&
+                revision_store_ready && revisions.active_revision > 1) {
                 nk_layout_row_dynamic(&ctx, 34.0f, 1);
                 if (nk_button_label(&ctx, "Rollback previous revision")) {
                     rollback_requested = 1;
+                }
+            }
+
+            nk_layout_row_dynamic(&ctx, 24.0f, 1);
+            nk_label(&ctx, "Agent policy: isolated manual preview", NK_TEXT_LEFT);
+            nk_layout_row_dynamic(&ctx, 24.0f, 1);
+            nk_label(&ctx, "Describe a generated application change:", NK_TEXT_LEFT);
+            nk_layout_row_dynamic(&ctx, 72.0f, 1);
+            nk_edit_string(
+                &ctx,
+                NK_EDIT_BOX,
+                agent_request,
+                &agent_request_length,
+                (int)sizeof(agent_request) - 1,
+                nk_filter_default);
+            agent_request[agent_request_length] = '\0';
+            nk_layout_row_dynamic(&ctx, 34.0f, 1);
+            if (agent_ready && !agent_preview_active &&
+                agent_session.status != MORPH_AGENT_RUNNING &&
+                agent_request_length > 0 &&
+                nk_button_label(&ctx, "Ask coding agent")) {
+                agent_submit_requested = 1;
+            }
+            nk_layout_row_dynamic(&ctx, 24.0f, 1);
+            nk_label(&ctx, agent_status, NK_TEXT_LEFT);
+
+            if (agent_preview_active) {
+                nk_layout_row_dynamic(&ctx, 34.0f, 2);
+                if (nk_button_label(&ctx, "Accept preview")) {
+                    agent_accept_requested = 1;
+                }
+                if (nk_button_label(&ctx, "Reject preview")) {
+                    agent_reject_requested = 1;
                 }
             }
 
@@ -492,7 +604,124 @@ int main(int argc, char **argv)
                 NK_ANTI_ALIASING_ON);
         }
 
-        if (rollback_requested) {
+        if (agent_accept_requested) {
+            int accepted = 0;
+            int source_updated = 0;
+            agent_accept_requested = 0;
+            if (agent_preview_active && revision_store_ready) {
+                source_updated = morph_agent_session_accept_source(
+                        &agent_session,
+                        module_source,
+                        module_error,
+                        sizeof(module_error));
+                accepted = source_updated && checkpoint_active_module(
+                    &revisions,
+                    &module,
+                    &host,
+                    agent_session.candidate_path,
+                    module_error,
+                    sizeof(module_error));
+                if (source_updated && !accepted) {
+                    (void)morph_agent_session_restore_source(
+                        &agent_session,
+                        module_source,
+                        module_error,
+                        sizeof(module_error));
+                }
+            }
+            if (accepted) {
+                if (!morph_revision_store_refresh_session(
+                        &revisions,
+                        store_error,
+                        sizeof(store_error))) {
+                    SDL_Log("Unable to arm accepted revision crash recovery: %s", store_error);
+                }
+                (void)morph_agent_session_record_outcome(
+                    &agent_session,
+                    "accepted",
+                    revisions.active_revision,
+                    store_error,
+                    sizeof(store_error));
+                free(preview_restore_state);
+                preview_restore_state = NULL;
+                preview_restore_state_size = 0;
+                agent_preview_active = 0;
+                agent_request_length = 0;
+                agent_request[0] = '\0';
+                snprintf(agent_status, sizeof(agent_status), "Accepted as revision %lu", revisions.active_revision);
+                module_error[0] = '\0';
+            }
+        } else if (agent_reject_requested) {
+            int rejected;
+            agent_reject_requested = 0;
+            rejected = agent_preview_active &&
+                morph_runtime_module_compile_candidate(
+                    &module,
+                    agent_session.source_before_path,
+                    module_error,
+                    sizeof(module_error)) &&
+                morph_runtime_module_activate_candidate_with_state(
+                    &module,
+                    &host,
+                    preview_restore_state,
+                    preview_restore_state_size,
+                    module_error,
+                    sizeof(module_error));
+            if (rejected) {
+                (void)morph_revision_store_refresh_session(
+                    &revisions,
+                    store_error,
+                    sizeof(store_error));
+                (void)morph_agent_session_record_outcome(
+                    &agent_session,
+                    "rejected",
+                    revisions.active_revision,
+                    store_error,
+                    sizeof(store_error));
+                free(preview_restore_state);
+                preview_restore_state = NULL;
+                preview_restore_state_size = 0;
+                agent_preview_active = 0;
+                snprintf(agent_status, sizeof(agent_status), "Preview rejected; accepted revision restored");
+                module_error[0] = '\0';
+            }
+        } else if (agent_submit_requested) {
+            char accepted_source[MORPH_REVISION_PATH_CAPACITY];
+            void *accepted_state = NULL;
+            unsigned long accepted_state_size = 0;
+            const char *agent_base_source = module_source;
+            int base_ready = 1;
+
+            agent_submit_requested = 0;
+            if (revisions.active_revision) {
+                base_ready = morph_revision_store_load(
+                    &revisions,
+                    revisions.active_revision,
+                    accepted_source,
+                    sizeof(accepted_source),
+                    &accepted_state,
+                    &accepted_state_size,
+                    module_error,
+                    sizeof(module_error));
+                agent_base_source = accepted_source;
+            }
+            morph_revision_store_release_state(accepted_state);
+            if (base_ready && morph_agent_session_begin(
+                    &agent_session,
+                    agent_request,
+                    agent_base_source,
+                    MORPHEUS_SOURCE_ROOT "/include/morpheus/app_api.h",
+                    module_error,
+                    sizeof(module_error)) &&
+                morph_agent_session_start_attempt(
+                    &agent_session,
+                    "",
+                    module_error,
+                    sizeof(module_error))) {
+                snprintf(agent_status, sizeof(agent_status), "Agent attempt 1 of %d running", MORPH_AGENT_MAX_ATTEMPTS);
+                module_error[0] = '\0';
+            }
+        } else if (rollback_requested) {
             char rollback_source[MORPH_REVISION_PATH_CAPACITY];
             void *rollback_state = NULL;
             unsigned long rollback_state_size = 0;
@@ -578,10 +807,110 @@ int main(int argc, char **argv)
                 module_error[0] = '\0';
             }
         }
+
+        if (agent_session.status == MORPH_AGENT_RUNNING) {
+            int agent_finished = 0;
+            if (!morph_agent_session_poll(
+                    &agent_session,
+                    &agent_finished,
+                    module_error,
+                    sizeof(module_error))) {
+                snprintf(agent_status, sizeof(agent_status), "Agent process monitoring failed");
+                (void)morph_agent_session_record_outcome(
+                    &agent_session,
+                    "failed",
+                    revisions.active_revision,
+                    store_error,
+                    sizeof(store_error));
+            } else if (agent_finished) {
+                int candidate_succeeded = 0;
+                if (agent_session.status == MORPH_AGENT_PROVIDER_SUCCEEDED) {
+                    candidate_succeeded = morph_runtime_module_compile_candidate(
+                            &module,
+                            agent_session.candidate_path,
+                            module_error,
+                            sizeof(module_error)) &&
+                        copy_runtime_state(
+                            &module,
+                            &host,
+                            &preview_restore_state,
+                            &preview_restore_state_size,
+                            module_error,
+                            sizeof(module_error));
+                    if (candidate_succeeded && revision_store_ready) {
+                        candidate_succeeded = morph_revision_store_end_session(
+                            &revisions,
+                            store_error,
+                            sizeof(store_error));
+                    }
+                    if (candidate_succeeded) {
+                        candidate_succeeded = morph_runtime_module_activate_candidate(
+                            &module,
+                            &host,
+                            module_error,
+                            sizeof(module_error));
+                    }
+                    (void)morph_agent_session_record_build(
+                        &agent_session,
+                        candidate_succeeded,
+                        morph_runtime_stage_name(module.last_stage),
+                        module_error,
+                        store_error,
+                        sizeof(store_error));
+                    (void)morph_agent_session_create_patch(
+                        &agent_session,
+                        store_error,
+                        sizeof(store_error));
+                } else {
+                    snprintf(module_error, sizeof(module_error), "External coding agent exited unsuccessfully");
+                }
+
+                if (candidate_succeeded) {
+                    agent_preview_active = 1;
+                    snprintf(agent_status, sizeof(agent_status), "Preview ready — accept or reject");
+                    module_error[0] = '\0';
+                } else {
+                    free(preview_restore_state);
+                    preview_restore_state = NULL;
+                    preview_restore_state_size = 0;
+                    if (revision_store_ready) {
+                        (void)morph_revision_store_refresh_session(
+                            &revisions,
+                            store_error,
+                            sizeof(store_error));
+                    }
+                    if (agent_session.status == MORPH_AGENT_PROVIDER_SUCCEEDED &&
+                        agent_session.attempt < MORPH_AGENT_MAX_ATTEMPTS &&
+                        morph_agent_session_start_attempt(
+                            &agent_session,
+                            module_error,
+                            store_error,
+                            sizeof(store_error))) {
+                        snprintf(
+                            agent_status,
+                            sizeof(agent_status),
+                            "Diagnostics returned; repair attempt %u of %d running",
+                            agent_session.attempt,
+                            MORPH_AGENT_MAX_ATTEMPTS);
+                        module_error[0] = '\0';
+                    } else {
+                        (void)morph_agent_session_record_outcome(
+                            &agent_session,
+                            "failed",
+                            revisions.active_revision,
+                            store_error,
+                            sizeof(store_error));
+                        snprintf(agent_status, sizeof(agent_status), "Agent run failed after %u attempt(s)", agent_session.attempt);
+                    }
+                }
+            }
+        }
     }
 
     exit_code = EXIT_SUCCESS;
     morph_runtime_module_destroy(&module, &host);
+    morph_agent_session_cancel(&agent_session);
+    free(preview_restore_state);
     if (revision_store_ready &&
         !morph_revision_store_end_session(
             &revisions,
