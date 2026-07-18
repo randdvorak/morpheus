@@ -88,6 +88,51 @@ set_target_properties(morpheus_libtcc PROPERTIES
 )
 add_dependencies(morpheus_libtcc morpheus_tinycc)
 
+# SQLite's canonical configure build rejects source paths containing spaces.
+# Stage its pinned public-domain sources under the platform temporary directory
+# so this repository remains buildable from paths such as "External HD".
+string(SHA256 MORPHEUS_SQLITE_STAGE_HASH "${CMAKE_SOURCE_DIR}")
+string(SUBSTRING "${MORPHEUS_SQLITE_STAGE_HASH}" 0 12 MORPHEUS_SQLITE_STAGE_HASH)
+if(APPLE)
+    set(MORPHEUS_SQLITE_STAGE_ROOT
+        "/private/tmp/morpheus-sqlite-${MORPHEUS_SQLITE_STAGE_HASH}")
+else()
+    set(MORPHEUS_SQLITE_STAGE_ROOT
+        "${CMAKE_BINARY_DIR}/sqlite-stage-${MORPHEUS_SQLITE_STAGE_HASH}")
+endif()
+set(MORPHEUS_SQLITE_SOURCE_DIR "${MORPHEUS_SQLITE_STAGE_ROOT}/src")
+set(MORPHEUS_SQLITE_BUILD_DIR "${MORPHEUS_SQLITE_STAGE_ROOT}/build")
+set(MORPHEUS_SQLITE_LIBRARY "${MORPHEUS_SQLITE_BUILD_DIR}/libsqlite3.a")
+file(MAKE_DIRECTORY "${MORPHEUS_SQLITE_BUILD_DIR}")
+
+ExternalProject_Add(morpheus_sqlite_external
+    SOURCE_DIR "${MORPHEUS_SQLITE_SOURCE_DIR}"
+    BINARY_DIR "${MORPHEUS_SQLITE_BUILD_DIR}"
+    DOWNLOAD_COMMAND
+        "${CMAKE_COMMAND}" -E copy_directory
+        "${CMAKE_SOURCE_DIR}/third_party/sqlite"
+        "${MORPHEUS_SQLITE_SOURCE_DIR}"
+    UPDATE_COMMAND ""
+    CONFIGURE_COMMAND
+        "${CMAKE_COMMAND}" -E env "CC=${CMAKE_C_COMPILER}"
+        "${MORPHEUS_SQLITE_SOURCE_DIR}/configure"
+        --disable-shared
+        --disable-readline
+        --disable-load-extension
+    BUILD_COMMAND "${MORPHEUS_MAKE_EXECUTABLE}" libsqlite3.a
+    INSTALL_COMMAND ""
+    BUILD_BYPRODUCTS
+        "${MORPHEUS_SQLITE_LIBRARY}"
+        "${MORPHEUS_SQLITE_BUILD_DIR}/sqlite3.h"
+)
+
+add_library(morpheus_sqlite STATIC IMPORTED GLOBAL)
+set_target_properties(morpheus_sqlite PROPERTIES
+    IMPORTED_LOCATION "${MORPHEUS_SQLITE_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${MORPHEUS_SQLITE_BUILD_DIR}"
+)
+add_dependencies(morpheus_sqlite morpheus_sqlite_external)
+
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
     src/host/http_service.m
@@ -126,6 +171,7 @@ target_compile_options(morpheus PRIVATE
 
 target_link_libraries(morpheus PRIVATE
     morpheus_libtcc
+    morpheus_sqlite
     SDL3::SDL3-static
     "-framework Metal"
     "-framework QuartzCore"
@@ -222,6 +268,16 @@ if(BUILD_TESTING)
         -Wpedantic
     )
     add_test(NAME revision_store COMMAND morpheus_revision_store_test)
+
+    add_executable(morpheus_sqlite_test tests/sqlite_test.c)
+    add_dependencies(morpheus_sqlite_test morpheus_sqlite_external)
+    target_compile_options(morpheus_sqlite_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_sqlite_test PRIVATE morpheus_sqlite)
+    add_test(NAME sqlite COMMAND morpheus_sqlite_test)
 
     add_executable(morpheus_fake_agent_provider
         tests/fixtures/fake_agent_provider.c
