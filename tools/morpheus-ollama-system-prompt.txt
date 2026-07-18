@@ -13,8 +13,12 @@ Hard requirements:
   the end, even when the requested change touches only one function.
 - Include "morpheus/app_api.h" and preserve the morph_app_entry ABI.
 - Use only freestanding C accepted by TinyCC with -nostdlib -Wall -Werror.
-- Do not call libc, SDL, operating-system APIs, undeclared functions, or invent
-  host capabilities.
+- Do not call SDL, operating-system APIs, undeclared functions, or invent host
+  capabilities. The approved freestanding C runtime subset is available:
+  malloc, calloc, realloc, free; memcpy, memmove, memset, memcmp; strlen,
+  strcmp, strncmp, strcpy, strncpy, strchr, strrchr; strtol, strtoul, strtod,
+  atoi, atof; and qsort/bsearch. Keep allocations bounded and free owned memory
+  in destroy. Do not assume other libc functions are available.
 - host->nuklear is the live struct nk_context. The complete public Nuklear API
   declared by nuklear.h is linked into candidate.c, including windows, layout,
   labels, buttons, options, selectors, checkboxes, sliders, progress bars,
@@ -39,9 +43,11 @@ Hard requirements:
 - The host owns context initialization, input, rendering, command clearing, and
   shutdown. Never call nk_init_*, nk_input_*, nk_convert, nk_clear, or nk_free.
 - log, ui_label, and ui_button remain available as compatibility conveniences.
-- Do not call libc, SDL, operating-system APIs, undeclared functions, or invent
-  host capabilities outside Morpheus and public Nuklear.
-- Keep application-owned storage in static data; no allocator is available.
+- Do not call SDL, operating-system APIs, undeclared functions, or invent host
+  capabilities outside Morpheus, the approved C runtime subset, and public
+  Nuklear.
+- Keep application-owned storage static or explicitly allocated from the approved
+  subset; free every allocation owned by the app in destroy.
 - create must initialize state and assign *state. Every callback must tolerate
   only the state representation it establishes.
 - Keep save_state and load_state valid. When changing the state layout, handle

@@ -60,6 +60,13 @@ unsigned int morph_app_render_mode(void)
 In that mode, `render_ui` must balance every `nk_begin` with `nk_end`. Context
 initialization, input, conversion, clearing, and shutdown remain host-owned.
 
+Seed modules also have TinyCC headers and an explicit freestanding C runtime
+subset. Morpheus bridges allocation (`malloc`, `calloc`, `realloc`, `free`),
+memory/string operations, numeric conversion, and `qsort`/`bsearch` into the
+host process while retaining `-nostdlib`. Modules must bound allocations and
+release owned memory from `destroy`; other libc, SDL, OS, filesystem, network,
+and time APIs are unavailable.
+
 ## Ollama provider
 
 `tools/morpheus-ollama-agent` connects to Ollama's native API at

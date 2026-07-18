@@ -105,12 +105,24 @@ int main(void)
     if (!morph_runtime_module_reload(
             &module,
             &host,
+            MORPHEUS_TEST_FIXTURE_ROOT "/module_stdlib.c",
+            error,
+            sizeof(error)) ||
+        !expect_active(&module, &host, "stdlib-smoke", "TinyCC stdlib available")) {
+        fprintf(stderr, "stdlib module failed to load: %s\n", error);
+        return 2;
+    }
+    morph_runtime_module_destroy(&module, &host);
+
+    if (!morph_runtime_module_reload(
+            &module,
+            &host,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_nuklear.c",
             error,
             sizeof(error)) ||
         morph_runtime_module_render_mode(&module) != MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
         fprintf(stderr, "Nuklear module failed to load: %s\n", error);
-        return 2;
+        return 3;
     }
     morph_runtime_module_render_ui(&module, &host);
     morph_runtime_module_destroy(&module, &host);
@@ -123,11 +135,11 @@ int main(void)
             sizeof(error)) ||
         !expect_active(&module, &host, "version-one", "version one: 41")) {
         fprintf(stderr, "initial load failed: %s\n", error);
-        return 3;
+        return 4;
     }
     if (module.last_stage != MORPH_RUNTIME_STAGE_ACTIVE) {
         fprintf(stderr, "initial load did not report the active stage\n");
-        return 4;
+        return 5;
     }
     version_one_compiler = module.compiler;
 
@@ -140,7 +152,7 @@ int main(void)
         module.last_stage != MORPH_RUNTIME_STAGE_VALIDATE ||
         !expect_active(&module, &host, "version-one", "version one: 41")) {
         fprintf(stderr, "invalid candidate replaced the active module\n");
-        return 5;
+        return 6;
     }
 
     if (morph_runtime_module_compile_candidate(
@@ -152,7 +164,7 @@ int main(void)
         module.last_stage != MORPH_RUNTIME_STAGE_COMPILE ||
         !expect_active(&module, &host, "version-one", "version one: 41")) {
         fprintf(stderr, "compiler failure disturbed the active module\n");
-        return 6;
+        return 7;
     }
 
     if (!morph_runtime_module_compile_candidate(
@@ -170,7 +182,7 @@ int main(void)
         module.last_stage != MORPH_RUNTIME_STAGE_INITIALIZE ||
         !expect_active(&module, &host, "version-one", "version one: 41")) {
         fprintf(stderr, "initialization failure disturbed the active module\n");
-        return 7;
+        return 8;
     }
 
     if (!morph_runtime_module_compile_candidate(
@@ -186,7 +198,7 @@ int main(void)
         module.last_stage != MORPH_RUNTIME_STAGE_MIGRATE ||
         !expect_active(&module, &host, "version-one", "version one: 41")) {
         fprintf(stderr, "migration failure disturbed the active module\n");
-        return 8;
+        return 9;
     }
 
     if (!morph_runtime_module_compile_candidate(
@@ -198,7 +210,7 @@ int main(void)
         module.compiler != version_one_compiler ||
         !expect_active(&module, &host, "version-one", "version one: 41")) {
         fprintf(stderr, "candidate compilation was not isolated: %s\n", error);
-        return 9;
+        return 10;
     }
 
     if (!morph_runtime_module_activate_candidate(
@@ -214,7 +226,7 @@ int main(void)
             "version-two",
             "version two: migrated 41")) {
         fprintf(stderr, "stateful activation failed: %s\n", error);
-        return 10;
+        return 11;
     }
 
     if (!morph_runtime_module_compile_candidate(
@@ -236,7 +248,7 @@ int main(void)
             "version-two",
             "version two: restored 17")) {
         fprintf(stderr, "explicit checkpoint restoration failed: %s\n", error);
-        return 11;
+        return 12;
     }
 
     morph_runtime_module_destroy(&module, &host);
