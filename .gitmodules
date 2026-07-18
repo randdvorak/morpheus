@@ -1,0 +1,9 @@
+[submodule "Nuklear"]
+	path = Nuklear
+	url = git@github.com:randdvorak/Nuklear.git
+[submodule "tinycc"]
+	path = tinycc
+	url = git://repo.or.cz/tinycc.git
+[submodule "llama.cpp"]
+	path = llama.cpp
+	url = git@github.com:ggml-org/llama.cpp.git
