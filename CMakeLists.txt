@@ -7,6 +7,7 @@ include(CTest)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build third-party libraries statically" FORCE)
 
 file(STRINGS
     "${CMAKE_SOURCE_DIR}/Nuklear/nuklear.h"
@@ -133,6 +134,16 @@ set_target_properties(morpheus_sqlite PROPERTIES
 )
 add_dependencies(morpheus_sqlite morpheus_sqlite_external)
 
+set(YYJSON_BUILD_TESTS OFF CACHE BOOL "Build yyjson tests" FORCE)
+set(YYJSON_BUILD_FUZZER OFF CACHE BOOL "Build yyjson fuzzer" FORCE)
+set(YYJSON_BUILD_MISC OFF CACHE BOOL "Build yyjson utilities" FORCE)
+set(YYJSON_BUILD_DOC OFF CACHE BOOL "Build yyjson documentation" FORCE)
+set(YYJSON_INSTALL OFF CACHE BOOL "Install yyjson" FORCE)
+set(YYJSON_DISABLE_INCR_READER ON CACHE BOOL "Disable yyjson incremental reader" FORCE)
+set(YYJSON_DISABLE_UTILS ON CACHE BOOL "Disable yyjson patch/pointer utilities" FORCE)
+set(YYJSON_DISABLE_NON_STANDARD ON CACHE BOOL "Disable non-standard JSON" FORCE)
+add_subdirectory(third_party/yyjson EXCLUDE_FROM_ALL)
+
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
     src/host/http_service.m
@@ -172,6 +183,7 @@ target_compile_options(morpheus PRIVATE
 target_link_libraries(morpheus PRIVATE
     morpheus_libtcc
     morpheus_sqlite
+    yyjson
     SDL3::SDL3-static
     "-framework Metal"
     "-framework QuartzCore"
@@ -278,6 +290,15 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_sqlite_test PRIVATE morpheus_sqlite)
     add_test(NAME sqlite COMMAND morpheus_sqlite_test)
+
+    add_executable(morpheus_yyjson_test tests/yyjson_test.c)
+    target_compile_options(morpheus_yyjson_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_yyjson_test PRIVATE yyjson)
+    add_test(NAME yyjson COMMAND morpheus_yyjson_test)
 
     add_executable(morpheus_fake_agent_provider
         tests/fixtures/fake_agent_provider.c

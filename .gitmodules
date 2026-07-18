@@ -13,3 +13,6 @@
 [submodule "third_party/sqlite"]
 	path = third_party/sqlite
 	url = https://github.com/sqlite/sqlite.git
+[submodule "third_party/yyjson"]
+	path = third_party/yyjson
+	url = https://github.com/ibireme/yyjson.git
