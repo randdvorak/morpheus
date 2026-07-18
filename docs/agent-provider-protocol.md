@@ -70,8 +70,9 @@ and time APIs are unavailable.
 The first SDK service is asynchronous HTTP through `host->http`. Use
 `morph_http_get` or `morph_http_post_json`, poll with `morph_http_poll` from
 `update`, and release completed or abandoned requests with
-`morph_http_cancel`. The service uses libcurl's multi interface and bounds each
-response at 1 MiB; `render_ui` must never wait on network I/O.
+`morph_http_cancel`. The host implements the facade with the target platform's
+native asynchronous networking stack and bounds each response at 1 MiB;
+`render_ui` must never wait on network I/O.
 
 ## Ollama provider
 

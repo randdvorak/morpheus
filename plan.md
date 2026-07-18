@@ -94,10 +94,9 @@ Planned capability tiers:
 1. **Async HTTP:** a stable `morph_http_*` facade implemented by the target
    platform's native networking stack where practical, with bounded timeouts,
    cancellation, response limits, headers, status codes, and polling from the
-   frame loop. The macOS backend uses `NSURLSession`; Windows should use WinHTTP
-   or Schannel-backed curl. A statically linked curl backend remains available
-   for platforms whose native stack is unsuitable. No blocking network call may
-   run inside `render_ui`.
+   frame loop. The macOS backend uses `NSURLSession`; Windows should use WinHTTP,
+   and other targets should use their native networking facilities. No blocking
+   network call may run inside `render_ui`.
 2. **JSON:** yyjson-backed parsing and serialization with request-scoped or
    arena-owned lifetimes. Generated code should not depend on yyjson internals.
 3. **Persistence:** SQLite-backed app storage with a per-application database,
