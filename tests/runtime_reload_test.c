@@ -118,6 +118,18 @@ int main(void)
     if (!morph_runtime_module_reload(
             &module,
             &host,
+            MORPHEUS_TEST_FIXTURE_ROOT "/module_json.c",
+            error,
+            sizeof(error)) ||
+        !expect_active(&module, &host, "json-smoke", "TinyCC JSON available")) {
+        fprintf(stderr, "JSON facade module failed to load: %s\n", error);
+        return 13;
+    }
+    morph_runtime_module_destroy(&module, &host);
+
+    if (!morph_runtime_module_reload(
+            &module,
+            &host,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_nuklear.c",
             error,
             sizeof(error)) ||

@@ -147,6 +147,7 @@ add_subdirectory(third_party/yyjson EXCLUDE_FROM_ALL)
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
     src/host/http_service.m
+    src/host/json_service.c
     src/agent/agent_session.c
     src/compiler/runtime_module.c
     src/project/revision_store.c
@@ -223,6 +224,7 @@ if(BUILD_TESTING)
     add_executable(morpheus_runtime_reload_test
         tests/runtime_reload_test.c
         src/compiler/runtime_module.c
+        src/host/json_service.c
     )
     add_dependencies(morpheus_runtime_reload_test morpheus_tinycc)
     target_include_directories(morpheus_runtime_reload_test PRIVATE
@@ -245,6 +247,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_runtime_reload_test PRIVATE
         morpheus_libtcc
+        yyjson
         ${CMAKE_DL_LIBS}
     )
     set_target_properties(morpheus_runtime_reload_test PROPERTIES ENABLE_EXPORTS TRUE)
@@ -291,7 +294,13 @@ if(BUILD_TESTING)
     target_link_libraries(morpheus_sqlite_test PRIVATE morpheus_sqlite)
     add_test(NAME sqlite COMMAND morpheus_sqlite_test)
 
-    add_executable(morpheus_yyjson_test tests/yyjson_test.c)
+    add_executable(morpheus_yyjson_test
+        tests/yyjson_test.c
+        src/host/json_service.c
+    )
+    target_include_directories(morpheus_yyjson_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+    )
     target_compile_options(morpheus_yyjson_test PRIVATE
         -Wall
         -Wextra
@@ -344,6 +353,7 @@ if(BUILD_TESTING)
         tests/agent_repair_loop_test.c
         src/agent/agent_session.c
         src/compiler/runtime_module.c
+        src/host/json_service.c
     )
     add_dependencies(
         morpheus_agent_repair_loop_test
@@ -373,6 +383,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_agent_repair_loop_test PRIVATE
         morpheus_libtcc
+        yyjson
         ${CMAKE_DL_LIBS}
     )
     add_test(NAME agent_repair_loop COMMAND morpheus_agent_repair_loop_test)

@@ -74,6 +74,17 @@ The first SDK service is asynchronous HTTP through `host->http`. Use
 native asynchronous networking stack and bounds each response at 1 MiB;
 `render_ui` must never wait on network I/O.
 
+JSON is available through the opaque `morph_json_*` facade. Parse text with
+`morph_json_parse`, borrow values from the returned document, and release the
+document only after all of its values are no longer used. Query values by type;
+typed getters fail rather than coercing incompatible JSON values. For output,
+create a `morph_json_builder`, attach each mutable value only once, set one root,
+and call `morph_json_serialize`. Mutable values belong to their builder. The
+serialized `morph_json_buffer` is the only transferred allocation and must be
+released with `morph_json_buffer_free`. Generated modules must not retain parsed
+values after freeing their document or mutable values after freeing their
+builder.
+
 ## Ollama provider
 
 `tools/morpheus-ollama-agent` connects to Ollama's native API at

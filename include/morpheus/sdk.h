@@ -33,4 +33,89 @@ void morph_http_cancel(
     morph_http_service *service,
     morph_http_request_id request_id);
 
+typedef struct morph_json_document morph_json_document;
+typedef struct morph_json_value morph_json_value;
+typedef struct morph_json_builder morph_json_builder;
+typedef struct morph_json_mut_value morph_json_mut_value;
+
+typedef enum morph_json_type {
+    MORPH_JSON_INVALID = 0,
+    MORPH_JSON_NULL = 1,
+    MORPH_JSON_BOOLEAN = 2,
+    MORPH_JSON_INTEGER = 3,
+    MORPH_JSON_NUMBER = 4,
+    MORPH_JSON_STRING = 5,
+    MORPH_JSON_ARRAY = 6,
+    MORPH_JSON_OBJECT = 7
+} morph_json_type;
+
+typedef struct morph_json_error {
+    unsigned long position;
+    unsigned int code;
+    char message[128];
+} morph_json_error;
+
+typedef struct morph_json_buffer {
+    char *data;
+    unsigned long size;
+} morph_json_buffer;
+
+/* Parsed values are borrowed and remain valid until their document is freed. */
+morph_json_document *morph_json_parse(
+    const char *json,
+    unsigned long size,
+    morph_json_error *error);
+void morph_json_document_free(morph_json_document *document);
+const morph_json_value *morph_json_root(const morph_json_document *document);
+morph_json_type morph_json_value_type(const morph_json_value *value);
+const morph_json_value *morph_json_object_get(
+    const morph_json_value *object,
+    const char *key);
+unsigned long morph_json_array_size(const morph_json_value *array);
+const morph_json_value *morph_json_array_get(
+    const morph_json_value *array,
+    unsigned long index);
+int morph_json_get_boolean(const morph_json_value *value, int *output);
+int morph_json_get_integer(const morph_json_value *value, long long *output);
+int morph_json_get_number(const morph_json_value *value, double *output);
+const char *morph_json_get_string(
+    const morph_json_value *value,
+    unsigned long *size);
+
+/* Mutable values are borrowed until their builder is freed and attach once. */
+morph_json_builder *morph_json_builder_create(void);
+void morph_json_builder_free(morph_json_builder *builder);
+morph_json_mut_value *morph_json_make_null(morph_json_builder *builder);
+morph_json_mut_value *morph_json_make_boolean(
+    morph_json_builder *builder,
+    int value);
+morph_json_mut_value *morph_json_make_integer(
+    morph_json_builder *builder,
+    long long value);
+morph_json_mut_value *morph_json_make_number(
+    morph_json_builder *builder,
+    double value);
+morph_json_mut_value *morph_json_make_string(
+    morph_json_builder *builder,
+    const char *value,
+    unsigned long size);
+morph_json_mut_value *morph_json_make_array(morph_json_builder *builder);
+morph_json_mut_value *morph_json_make_object(morph_json_builder *builder);
+int morph_json_array_append(
+    morph_json_builder *builder,
+    morph_json_mut_value *array,
+    morph_json_mut_value *value);
+int morph_json_object_set(
+    morph_json_builder *builder,
+    morph_json_mut_value *object,
+    const char *key,
+    morph_json_mut_value *value);
+int morph_json_builder_set_root(
+    morph_json_builder *builder,
+    morph_json_mut_value *root);
+int morph_json_serialize(
+    morph_json_builder *builder,
+    morph_json_buffer *output);
+void morph_json_buffer_free(morph_json_buffer *buffer);
+
 #endif
