@@ -12,6 +12,32 @@ Once an application is satisfactory, Morpheus can freeze the accepted source,
 assets, configuration, and pinned dependencies into a conventional standalone
 executable.
 
+## Ultimate Product Goal
+
+Morpheus is both an application builder and a development host. The intended
+end-to-end product workflow is:
+
+1. Launch Morpheus and describe an application.
+2. Let an agent create and revise the generated application inside the Morpheus
+   host, using hot reload for rapid preview and recovery.
+3. Preview, test, accept, and roll back revisions until the application is
+   satisfactory.
+4. Export the accepted revision as a conventional standalone application.
+5. Run and distribute the exported application without requiring Morpheus, the
+   Morpheus source checkout, TinyCC, a coding agent, or development tools.
+6. Preserve the exported application's user data across launches independently
+   of the Morpheus project that created it.
+
+The exported application is the primary user-facing artifact. Morpheus is the
+factory used to create it. Continuing self-modification after export is an
+optional advanced profile, not a requirement of the default standalone export.
+
+Success therefore means more than producing a Mach-O executable or `.app`
+directory. A standalone export must be relocatable, self-contained except for
+documented operating-system facilities and optional external services, able to
+persist its own state, reproducible from an accepted revision, and suitable for
+normal macOS signing and distribution.
+
 ## Architectural Principle
 
 The system is divided into two layers:
@@ -257,6 +283,39 @@ memory. The export pipeline consumes:
 The accepted C source is compiled normally with Clang and linked into an
 application executable or bundle.
 
+The export pipeline must have a deliberate boundary between immutable inputs
+and mutable runtime data:
+
+- The signed application bundle contains executable code, read-only assets,
+  export metadata, and optional seed data.
+- On macOS, non-code resources belong under `Contents/Resources` and are located
+  at runtime through the application bundle rather than build-time absolute
+  paths.
+- User-modifiable data belongs outside the bundle, under the platform's
+  application-support location. For macOS this is normally
+  `~/Library/Application Support/<bundle-id>/`.
+- Cacheable or reproducible data belongs under the platform cache location and
+  must not be treated as durable application state.
+- Exported code must not depend on `MORPHEUS_SOURCE_ROOT`, a CMake build
+  directory, submodule working trees, or scripts in the Morpheus repository.
+
+Every export records enough metadata to explain and reproduce the artifact:
+
+- Export format version and application state schema version
+- Morpheus host and application ABI versions
+- Accepted source revision and content hashes
+- Application identifier, name, version, and minimum operating-system version
+- Enabled SDK capabilities and optional runtime components
+- Asset manifest and hashes
+- Exact dependency revisions and relevant build configuration
+
+Application state must use an explicit, versioned serialization format. Raw
+copies of an in-memory C structure may be useful for an early prototype, but are
+not a durable export format because padding, pointer values, compiler layout,
+and later source revisions can change. Exported applications need atomic state
+writes, migration hooks, and a policy for recovering from an interrupted or
+incompatible write.
+
 Two export profiles are planned:
 
 ### Frozen Application
@@ -265,16 +324,54 @@ Two export profiles are planned:
 - TinyCC and coding-agent components are omitted.
 - llama.cpp may be retained or removed based on application requirements.
 - The result cannot modify itself unless that capability is explicitly retained.
+- This is the default and primary standalone export profile.
+- The accepted generated module is compiled ahead of time and linked directly
+  into an export host that contains only the capabilities selected by the app.
+- The exported UI must not expose Morpheus development controls such as agent
+  prompts, recompilation, preview acceptance, or revision rollback unless an
+  export option explicitly includes them.
+- The app creates its writable application-support workspace on first launch,
+  optionally initializing it from bundled seed state.
+- Runtime changes are saved on meaningful mutations or a bounded debounce, at
+  lifecycle boundaries, and before clean shutdown.
 
 ### Self-Modifying Application
 
 - TinyCC, the source workspace, and agent integration remain available.
 - Hot reload continues to work after packaging.
 - Distribution must account for executable-memory and signing requirements.
+- Read-only compiler inputs and initial source are bundled as resources, then
+  copied into application support before modification; a signed bundle is never
+  used as a writable workspace.
+- All TinyCC headers, libraries, provider executables, and other runtime inputs
+  must be resolved relative to the bundle or application-support workspace,
+  never relative to the original build machine.
 
 GGUF models may be bundled as assets or distributed beside the application.
 Because they can be very large, embedding them inside the executable itself is
 not the default interpretation of "standalone."
+
+### Export Verification
+
+An export is not considered standalone until it passes a clean-room-style
+relocatability test:
+
+1. Build the export from a named accepted revision.
+2. Copy the `.app` outside both the source checkout and CMake build tree.
+3. Launch with a new application-support directory and no Morpheus-specific
+   environment variables.
+4. Confirm that no runtime path points into the original checkout or build tree.
+5. Modify application state, quit normally, relaunch, and verify restoration.
+6. Exercise bundled assets, networking, and every selected host capability.
+7. Simulate an interrupted state write and verify recovery behavior.
+8. Validate the bundle structure, dynamic-library dependencies, code signature,
+   hardened-runtime entitlements, and Gatekeeper assessment.
+9. For public distribution, sign with Developer ID, notarize, staple the ticket,
+   and repeat launch testing from the actual ZIP, disk image, or installer.
+
+Secrets must not be embedded in generated source, seed state, manifests, or the
+executable. Export validation should scan for credentials and build-machine
+paths and fail with an actionable diagnostic when either is found.
 
 ## Apple Silicon and Hardened Runtime Risk
 
@@ -378,9 +475,16 @@ the host, and invalid candidates do not destroy the current session.
 - Associate logs, diagnostics, and state with revisions.
 - Implement crash-loop detection and safe-mode rollback.
 - Establish asset handling.
+- Separate immutable bundled/seed inputs from the writable development
+  workspace.
+- Save the latest active state before clean shutdown rather than only when a
+  revision is accepted.
+- Define versioned state serialization, atomic writes, migrations, and recovery
+  from incompatible state.
 
 **Exit criterion:** the complete application can be reconstructed from durable
-source, metadata, state, assets, and pinned dependencies.
+source, metadata, state, assets, and pinned dependencies, and ordinary user
+state survives a clean quit and relaunch.
 
 ### Milestone 5: Coding-Agent Loop
 
@@ -411,20 +515,35 @@ workflow as the initial external agent.
 - Select development components through export profiles.
 - Package assets and optional models.
 - Produce a macOS application bundle.
-- Sign, validate, and test the exported application.
+- Generate a versioned export manifest and seed-state package.
+- Remove all source-tree and build-tree path dependencies from production code.
+- Use the platform application-support directory for writable exported-app data.
+- Provide a default frozen profile that omits TinyCC, agents, and development UI.
+- Add export-time scans for embedded credentials and build-machine paths.
+- Test the bundle after moving it outside the repository and build directory.
+- Verify state across clean quit, relaunch, migration, and interrupted writes.
+- Sign with Developer ID, enable the appropriate hardened-runtime settings,
+  notarize, staple, and validate the distributable artifact.
 
-**Exit criterion:** an accepted application can be reproduced as a standalone
-bundle that behaves like its development version.
+**Exit criterion:** an accepted application can be reproduced as a relocatable,
+self-contained standalone bundle that behaves like its accepted Morpheus
+preview, persists its own user state, launches without the Morpheus checkout or
+development tools, and passes macOS distribution validation.
 
 ## Immediate Next Step
 
-Implement Milestones 1 and 2 as a narrow vertical slice. The first experiment
-should prove both ends of the architecture:
+Build the first frozen-export vertical slice from the current accepted revision:
 
-1. A native SDL3/Metal/Nuklear window controlled by the stable host.
-2. A TinyCC-generated C module loaded through a minimal versioned ABI on Apple
-   Silicon.
+1. Add a small platform-path layer for bundle resources, application support,
+   and caches, while retaining explicit environment overrides for tests.
+2. Compile the accepted generated application with Clang into a separate export
+   target rather than loading it through TinyCC.
+3. Produce an `.app` containing only the export host, accepted application,
+   selected capabilities, assets, manifest, and optional seed state.
+4. Save versioned application state atomically before clean shutdown and restore
+   it on relaunch.
+5. Copy the bundle to a temporary location and verify that it runs with the
+   source checkout unavailable.
 
-This experiment resolves the highest-risk technical question—JIT-style
-executable memory on ARM64 macOS—before investment in the agent, persistence,
-model, and export layers.
+This slice proves the defining product promise: an application created and
+accepted inside Morpheus can leave Morpheus and run independently.
