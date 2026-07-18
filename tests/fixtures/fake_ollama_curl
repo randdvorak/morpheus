@@ -21,6 +21,7 @@ case "$url" in
                  .stream == false and
                  .format.type == "object" and
                  (.messages[0].content | contains("Do not ask follow-up questions")) and
+                 (.messages[0].content | contains("MORPHEUS_RENDER_NUKLEAR_WINDOWS")) and
                  (.messages[0].content | contains("ui_label")) and
                  (.messages[1].content | contains("Current candidate.c"))' \
                 "$request_path" >/dev/null; then

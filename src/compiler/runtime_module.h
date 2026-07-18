@@ -19,6 +19,8 @@ typedef struct morph_runtime_module {
     void *state;
     void *pending_compiler;
     const morph_app_api *pending_api;
+    unsigned int render_mode;
+    unsigned int pending_render_mode;
     morph_runtime_stage last_stage;
 } morph_runtime_module;
 
@@ -48,6 +50,7 @@ int morph_runtime_module_capture_state(
     char *error,
     unsigned long error_capacity);
 int morph_runtime_module_has_candidate(const morph_runtime_module *module);
+unsigned int morph_runtime_module_render_mode(const morph_runtime_module *module);
 const char *morph_runtime_stage_name(morph_runtime_stage stage);
 int morph_runtime_module_reload(
     morph_runtime_module *module,

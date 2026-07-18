@@ -1,5 +1,6 @@
 #include "runtime_module.h"
 
+#include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -89,6 +90,29 @@ static void morph_discard_pending(morph_runtime_module *module)
     }
     module->pending_compiler = NULL;
     module->pending_api = NULL;
+    module->pending_render_mode = MORPHEUS_RENDER_EMBEDDED;
+}
+
+static void morph_add_nuklear_symbols(TCCState *compiler)
+{
+    void *address;
+#define MORPHEUS_NUKLEAR_SYMBOL(name) \
+    do { \
+        address = dlsym(RTLD_DEFAULT, #name); \
+        if (address) (void)tcc_add_symbol(compiler, #name, address); \
+    } while (0);
+#include "morpheus_nuklear_symbols.inc"
+#undef MORPHEUS_NUKLEAR_SYMBOL
+#define MORPHEUS_RUNTIME_SYMBOL(name) \
+    do { \
+        address = dlsym(RTLD_DEFAULT, #name); \
+        if (address) (void)tcc_add_symbol(compiler, #name, address); \
+    } while (0);
+    MORPHEUS_RUNTIME_SYMBOL(memcpy)
+    MORPHEUS_RUNTIME_SYMBOL(memmove)
+    MORPHEUS_RUNTIME_SYMBOL(memset)
+    MORPHEUS_RUNTIME_SYMBOL(memcmp)
+#undef MORPHEUS_RUNTIME_SYMBOL
 }
 
 int morph_runtime_module_compile_candidate(
@@ -99,7 +123,9 @@ int morph_runtime_module_compile_candidate(
 {
     TCCState *candidate;
     morph_app_entry_fn entry;
+    morph_app_render_mode_fn render_mode_entry;
     const morph_app_api *candidate_api;
+    unsigned int candidate_render_mode;
     morph_error_sink sink = {error, error_capacity, 0};
 
     if (error && error_capacity) {
@@ -122,8 +148,17 @@ int morph_runtime_module_compile_candidate(
     tcc_set_lib_path(candidate, MORPHEUS_TCC_LIB_PATH);
     tcc_set_options(candidate, "-nostdlib -Wall -Werror");
     tcc_add_include_path(candidate, MORPHEUS_SOURCE_ROOT "/include");
+    tcc_add_include_path(candidate, MORPHEUS_SOURCE_ROOT "/Nuklear");
+    tcc_add_include_path(candidate, MORPHEUS_TCC_INCLUDE_PATH);
 
-    if (tcc_set_output_type(candidate, TCC_OUTPUT_MEMORY) < 0 ||
+    if (tcc_set_output_type(candidate, TCC_OUTPUT_MEMORY) < 0) {
+        tcc_delete(candidate);
+        module->last_stage = MORPH_RUNTIME_STAGE_COMPILE;
+        return 0;
+    }
+    morph_add_nuklear_symbols(candidate);
+
+    if (
         tcc_add_file(candidate, source_path) < 0 ||
         tcc_relocate(candidate) < 0) {
         tcc_delete(candidate);
@@ -143,9 +178,16 @@ int morph_runtime_module_compile_candidate(
     }
 
     candidate_api = entry();
+    render_mode_entry = (morph_app_render_mode_fn)tcc_get_symbol(
+        candidate,
+        "morph_app_render_mode");
+    candidate_render_mode = render_mode_entry
+        ? render_mode_entry()
+        : MORPHEUS_RENDER_EMBEDDED;
     if (!candidate_api ||
         candidate_api->abi_version != MORPHEUS_APP_ABI_VERSION ||
-        !candidate_api->render_ui) {
+        !candidate_api->render_ui ||
+        candidate_render_mode > MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
         morph_set_error(
             error,
             error_capacity,
@@ -156,6 +198,7 @@ int morph_runtime_module_compile_candidate(
 
     module->pending_compiler = candidate;
     module->pending_api = candidate_api;
+    module->pending_render_mode = candidate_render_mode;
     return 1;
 }
 
@@ -298,8 +341,10 @@ static int morph_activate_candidate(
     module->compiler = candidate;
     module->api = candidate_api;
     module->state = candidate_state;
+    module->render_mode = module->pending_render_mode;
     module->pending_compiler = NULL;
     module->pending_api = NULL;
+    module->pending_render_mode = MORPHEUS_RENDER_EMBEDDED;
 
     morph_release_candidate(
         previous_compiler,
@@ -347,6 +392,11 @@ int morph_runtime_module_activate_candidate_with_state(
 int morph_runtime_module_has_candidate(const morph_runtime_module *module)
 {
     return module->pending_compiler != NULL;
+}
+
+unsigned int morph_runtime_module_render_mode(const morph_runtime_module *module)
+{
+    return module->api ? module->render_mode : MORPHEUS_RENDER_EMBEDDED;
 }
 
 const char *morph_runtime_stage_name(morph_runtime_stage stage)

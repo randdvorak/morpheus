@@ -38,6 +38,28 @@ accept it before Morpheus updates durable source and creates a revision.
 Rejecting recompiles the pre-run source and restores the state captured before
 preview activation.
 
+## Nuklear module access
+
+`morph_host.nuklear` exposes the host-owned `struct nk_context`, and runtime
+compilation registers every public `nk_*` function enabled by Morpheus's
+Nuklear configuration. Modules include `morpheus/app_api.h`, which supplies the
+matching official Nuklear types and declarations. This keeps one context and
+one Metal renderer while allowing generated code to use the complete widget,
+layout, styling, window, popup, chart, tree, group, menu, query, and canvas API.
+
+Existing modules render inside the host-owned **Generated Application** window.
+A module that wants to create arbitrary Nuklear windows exports:
+
+```c
+unsigned int morph_app_render_mode(void)
+{
+    return MORPHEUS_RENDER_NUKLEAR_WINDOWS;
+}
+```
+
+In that mode, `render_ui` must balance every `nk_begin` with `nk_end`. Context
+initialization, input, conversion, clearing, and shutdown remain host-owned.
+
 ## Ollama provider
 
 `tools/morpheus-ollama-agent` connects to Ollama's native API at

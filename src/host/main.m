@@ -12,6 +12,7 @@
 #define NK_INCLUDE_VERTEX_BUFFER_OUTPUT
 #define NK_INCLUDE_FONT_BAKING
 #define NK_INCLUDE_DEFAULT_FONT
+#define NK_INCLUDE_COMMAND_USERDATA
 #define NK_IMPLEMENTATION
 #include "nuklear.h"
 
@@ -387,6 +388,7 @@ int main(int argc, char **argv)
     host.log = host_log;
     host.ui_label = host_ui_label;
     host.ui_button = host_ui_button;
+    host.nuklear = &ctx;
 
     revision_store_ready = morph_revision_store_init(
         &revisions,
@@ -645,14 +647,19 @@ int main(int argc, char **argv)
         }
         nk_end(&ctx);
 
-        if (nk_begin(&ctx,
-                "Generated Application",
-                nk_rect(500, 30, 520, 300),
-                NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE |
-                NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
+        if (morph_runtime_module_render_mode(&module) ==
+            MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
             morph_runtime_module_render_ui(&module, &host);
+        } else {
+            if (nk_begin(&ctx,
+                    "Generated Application",
+                    nk_rect(500, 30, 520, 300),
+                    NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE |
+                    NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
+                morph_runtime_module_render_ui(&module, &host);
+            }
+            nk_end(&ctx);
         }
-        nk_end(&ctx);
 
         SDL_GetWindowSize(window, &window_width, &window_height);
         SDL_GetWindowSizeInPixels(window, &pixel_width, &pixel_height);

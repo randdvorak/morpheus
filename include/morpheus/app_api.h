@@ -1,8 +1,26 @@
 #ifndef MORPHEUS_APP_API_H
 #define MORPHEUS_APP_API_H
 
-#define MORPHEUS_HOST_ABI_VERSION 1u
+#define MORPHEUS_HOST_ABI_VERSION 2u
 #define MORPHEUS_APP_ABI_VERSION 2u
+
+#define NK_INCLUDE_FIXED_TYPES
+#define NK_INCLUDE_STANDARD_IO
+#define NK_INCLUDE_STANDARD_VARARGS
+#define NK_INCLUDE_DEFAULT_ALLOCATOR
+#define NK_INCLUDE_VERTEX_BUFFER_OUTPUT
+#define NK_INCLUDE_FONT_BAKING
+#define NK_INCLUDE_DEFAULT_FONT
+#define NK_INCLUDE_COMMAND_USERDATA
+/* main.m owns the one NK_IMPLEMENTATION translation unit. */
+#ifndef NK_NUKLEAR_H_
+#include "nuklear.h"
+#endif
+
+typedef enum morph_render_mode {
+    MORPHEUS_RENDER_EMBEDDED = 0,
+    MORPHEUS_RENDER_NUKLEAR_WINDOWS = 1
+} morph_render_mode;
 
 typedef struct morph_host morph_host;
 
@@ -12,6 +30,7 @@ struct morph_host {
     void (*log)(morph_host *host, const char *message);
     void (*ui_label)(morph_host *host, const char *text);
     int (*ui_button)(morph_host *host, const char *text);
+    struct nk_context *nuklear;
 };
 
 typedef struct morph_app_api {
@@ -34,5 +53,6 @@ typedef struct morph_app_api {
 } morph_app_api;
 
 typedef const morph_app_api *(*morph_app_entry_fn)(void);
+typedef unsigned int (*morph_app_render_mode_fn)(void);
 
 #endif

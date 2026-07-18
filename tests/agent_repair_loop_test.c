@@ -83,7 +83,8 @@ int main(void)
         NULL,
         host_log,
         host_label,
-        host_button
+        host_button,
+        NULL
     };
 
     if (!mkdtemp(root)) {

@@ -8,6 +8,35 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+file(STRINGS
+    "${CMAKE_SOURCE_DIR}/Nuklear/nuklear.h"
+    MORPHEUS_NUKLEAR_API_LINES
+    REGEX "^NK_API[ \t]+.*nk_[A-Za-z0-9_]+[ \t]*\\("
+)
+set(MORPHEUS_NUKLEAR_SYMBOLS)
+foreach(MORPHEUS_NUKLEAR_API_LINE IN LISTS MORPHEUS_NUKLEAR_API_LINES)
+    string(
+        REGEX REPLACE
+        "^.*(nk_[A-Za-z0-9_]+)[ \t]*\\(.*$"
+        "\\1"
+        MORPHEUS_NUKLEAR_SYMBOL
+        "${MORPHEUS_NUKLEAR_API_LINE}"
+    )
+    list(APPEND MORPHEUS_NUKLEAR_SYMBOLS "${MORPHEUS_NUKLEAR_SYMBOL}")
+endforeach()
+list(REMOVE_DUPLICATES MORPHEUS_NUKLEAR_SYMBOLS)
+list(SORT MORPHEUS_NUKLEAR_SYMBOLS)
+set(MORPHEUS_NUKLEAR_SYMBOL_FILE "")
+foreach(MORPHEUS_NUKLEAR_SYMBOL IN LISTS MORPHEUS_NUKLEAR_SYMBOLS)
+    string(APPEND MORPHEUS_NUKLEAR_SYMBOL_FILE
+        "MORPHEUS_NUKLEAR_SYMBOL(${MORPHEUS_NUKLEAR_SYMBOL})\n")
+endforeach()
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+file(WRITE
+    "${CMAKE_BINARY_DIR}/generated/morpheus_nuklear_symbols.inc"
+    "${MORPHEUS_NUKLEAR_SYMBOL_FILE}"
+)
+
 include(ExternalProject)
 find_program(MORPHEUS_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
 find_program(MORPHEUS_PATCH_EXECUTABLE NAMES patch REQUIRED)
@@ -68,6 +97,7 @@ add_executable(morpheus MACOSX_BUNDLE
 add_dependencies(morpheus morpheus_tinycc)
 
 target_include_directories(morpheus PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/Nuklear"
     "${CMAKE_SOURCE_DIR}/Nuklear/demo/metal"
@@ -82,6 +112,7 @@ target_compile_definitions(morpheus PRIVATE
     MORPHEUS_AGENT_PROVIDER_PATH="${MORPHEUS_AGENT_PROVIDER}"
     MORPHEUS_OLLAMA_PROVIDER_PATH="${CMAKE_SOURCE_DIR}/tools/morpheus-ollama-agent"
     MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
+    MORPHEUS_TCC_INCLUDE_PATH="${MORPHEUS_TCC_SOURCE_DIR}/include"
 )
 
 target_compile_options(morpheus PRIVATE
@@ -98,9 +129,11 @@ target_link_libraries(morpheus PRIVATE
     "-framework Metal"
     "-framework QuartzCore"
     "-framework Foundation"
+    ${CMAKE_DL_LIBS}
 )
 
 set_target_properties(morpheus PROPERTIES
+    ENABLE_EXPORTS TRUE
     OUTPUT_NAME "Morpheus"
     MACOSX_BUNDLE_BUNDLE_NAME "Morpheus"
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.morpheus.seed"
@@ -134,13 +167,16 @@ if(BUILD_TESTING)
     )
     add_dependencies(morpheus_runtime_reload_test morpheus_tinycc)
     target_include_directories(morpheus_runtime_reload_test PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
         "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
         "${CMAKE_SOURCE_DIR}/src/compiler"
         "${CMAKE_SOURCE_DIR}/tinycc"
     )
     target_compile_definitions(morpheus_runtime_reload_test PRIVATE
         MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
         MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
+        MORPHEUS_TCC_INCLUDE_PATH="${MORPHEUS_TCC_SOURCE_DIR}/include"
         MORPHEUS_TEST_FIXTURE_ROOT="${CMAKE_SOURCE_DIR}/tests/fixtures"
     )
     target_compile_options(morpheus_runtime_reload_test PRIVATE
@@ -150,7 +186,9 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_runtime_reload_test PRIVATE
         morpheus_libtcc
+        ${CMAKE_DL_LIBS}
     )
+    set_target_properties(morpheus_runtime_reload_test PROPERTIES ENABLE_EXPORTS TRUE)
     add_test(NAME runtime_reload COMMAND morpheus_runtime_reload_test)
 
     add_executable(morpheus_revision_store_test
@@ -218,7 +256,9 @@ if(BUILD_TESTING)
         morpheus_fake_repair_agent_provider
     )
     target_include_directories(morpheus_agent_repair_loop_test PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
         "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
         "${CMAKE_SOURCE_DIR}/src/agent"
         "${CMAKE_SOURCE_DIR}/src/compiler"
         "${CMAKE_SOURCE_DIR}/tinycc"
@@ -226,6 +266,7 @@ if(BUILD_TESTING)
     target_compile_definitions(morpheus_agent_repair_loop_test PRIVATE
         MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
         MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
+        MORPHEUS_TCC_INCLUDE_PATH="${MORPHEUS_TCC_SOURCE_DIR}/include"
         MORPHEUS_REPAIR_AGENT_PATH="$<TARGET_FILE:morpheus_fake_repair_agent_provider>"
         MORPHEUS_VALID_MODULE="${CMAKE_SOURCE_DIR}/tests/fixtures/module_v1.c"
         MORPHEUS_API_HEADER="${CMAKE_SOURCE_DIR}/include/morpheus/app_api.h"
@@ -237,6 +278,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_agent_repair_loop_test PRIVATE
         morpheus_libtcc
+        ${CMAKE_DL_LIBS}
     )
     add_test(NAME agent_repair_loop COMMAND morpheus_agent_repair_loop_test)
 
