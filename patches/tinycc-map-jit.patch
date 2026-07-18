@@ -143,13 +143,12 @@ index 4ff511df..31dd2283 100644
                  if (NULL == s->data || s->sh_type == SHT_NOBITS)
                      memset(ptr, 0, length);
                  else
-@@ -412,11 +457,16 @@ redo:
+@@ -412,11 +457,15 @@ redo:
                  continue;
  #endif
              f = k;
 +#ifdef CONFIG_RUNMEM_MAP_JIT
-+            if (f == 0 || f == 2)
-+                continue;
++            continue;
 +#else
              if (f >= CONFIG_RUNMEM_RO) {
                  if (f != 0)
@@ -160,7 +159,7 @@ index 4ff511df..31dd2283 100644
              n = PAGEALIGN(n);
              if (s1->verbose == 2) {
                  printf("protect         %3s %p  len %05x\n",
-@@ -427,7 +477,9 @@ redo:
+@@ -427,7 +476,9 @@ redo:
  #ifdef _WIN32
                      "VirtualProtect failed");
  #else

@@ -6,6 +6,8 @@ static const morph_app_api app_api = {
     0,
     0,
     0,
+    0,
+    0,
     0
 };
 

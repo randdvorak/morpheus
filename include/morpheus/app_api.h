@@ -2,7 +2,7 @@
 #define MORPHEUS_APP_API_H
 
 #define MORPHEUS_HOST_ABI_VERSION 1u
-#define MORPHEUS_APP_ABI_VERSION 1u
+#define MORPHEUS_APP_ABI_VERSION 2u
 
 typedef struct morph_host morph_host;
 
@@ -21,6 +21,16 @@ typedef struct morph_app_api {
     void (*destroy)(morph_host *host, void *state);
     void (*update)(morph_host *host, void *state, double dt);
     void (*render_ui)(morph_host *host, void *state);
+    int (*save_state)(
+        morph_host *host,
+        void *state,
+        const void **data,
+        unsigned long *size);
+    int (*load_state)(
+        morph_host *host,
+        void **state,
+        const void *data,
+        unsigned long size);
 } morph_app_api;
 
 typedef const morph_app_api *(*morph_app_entry_fn)(void);

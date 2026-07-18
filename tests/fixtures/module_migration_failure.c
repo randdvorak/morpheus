@@ -5,38 +5,38 @@ static int state_storage;
 static int create(morph_host *host, void **state)
 {
     (void)host;
-    state_storage = 41;
     *state = &state_storage;
     return 1;
 }
 
 static void render(morph_host *host, void *state)
 {
-    int value = *(int *)state;
-    host->ui_label(host, value == 41 ? "version one: 41" : "version one: bad");
+    (void)host;
+    (void)state;
 }
 
-static int save_state(
+static int load_state(
     morph_host *host,
-    void *state,
-    const void **data,
-    unsigned long *size)
+    void **state,
+    const void *data,
+    unsigned long size)
 {
     (void)host;
-    *data = state;
-    *size = sizeof(int);
-    return 1;
+    (void)state;
+    (void)data;
+    (void)size;
+    return 0;
 }
 
 static const morph_app_api app_api = {
     MORPHEUS_APP_ABI_VERSION,
-    "version-one",
+    "migration-failure",
     create,
     0,
     0,
     render,
-    save_state,
-    0
+    0,
+    load_state
 };
 
 const morph_app_api *morph_app_entry(void)

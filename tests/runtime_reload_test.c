@@ -59,36 +59,95 @@ int main(void)
             MORPHEUS_TEST_FIXTURE_ROOT "/module_v1.c",
             error,
             sizeof(error)) ||
-        !expect_active(&module, &host, "version-one", "version one")) {
+        !expect_active(&module, &host, "version-one", "version one: 41")) {
         fprintf(stderr, "initial load failed: %s\n", error);
         return 1;
     }
     version_one_compiler = module.compiler;
 
-    if (morph_runtime_module_reload(
+    if (morph_runtime_module_compile_candidate(
             &module,
-            &host,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_invalid.c",
             error,
             sizeof(error)) ||
-        !expect_active(&module, &host, "version-one", "version one")) {
+        morph_runtime_module_has_candidate(&module) ||
+        !expect_active(&module, &host, "version-one", "version one: 41")) {
         fprintf(stderr, "invalid candidate replaced the active module\n");
         return 2;
     }
 
-    if (!morph_runtime_module_reload(
+    if (morph_runtime_module_compile_candidate(
             &module,
-            &host,
-            MORPHEUS_TEST_FIXTURE_ROOT "/module_v2.c",
+            MORPHEUS_TEST_FIXTURE_ROOT "/module_compile_error.c",
             error,
             sizeof(error)) ||
-        module.compiler == version_one_compiler ||
-        !expect_active(&module, &host, "version-two", "version two")) {
-        fprintf(stderr, "valid reload failed: %s\n", error);
+        morph_runtime_module_has_candidate(&module) ||
+        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        fprintf(stderr, "compiler failure disturbed the active module\n");
         return 3;
     }
 
+    if (!morph_runtime_module_compile_candidate(
+            &module,
+            MORPHEUS_TEST_FIXTURE_ROOT "/module_init_failure.c",
+            error,
+            sizeof(error)) ||
+        !morph_runtime_module_has_candidate(&module) ||
+        morph_runtime_module_activate_candidate(
+            &module,
+            &host,
+            error,
+            sizeof(error)) ||
+        morph_runtime_module_has_candidate(&module) ||
+        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        fprintf(stderr, "initialization failure disturbed the active module\n");
+        return 4;
+    }
+
+    if (!morph_runtime_module_compile_candidate(
+            &module,
+            MORPHEUS_TEST_FIXTURE_ROOT "/module_migration_failure.c",
+            error,
+            sizeof(error)) ||
+        morph_runtime_module_activate_candidate(
+            &module,
+            &host,
+            error,
+            sizeof(error)) ||
+        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        fprintf(stderr, "migration failure disturbed the active module\n");
+        return 5;
+    }
+
+    if (!morph_runtime_module_compile_candidate(
+            &module,
+            MORPHEUS_TEST_FIXTURE_ROOT "/module_v2.c",
+            error,
+            sizeof(error)) ||
+        !morph_runtime_module_has_candidate(&module) ||
+        module.compiler != version_one_compiler ||
+        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        fprintf(stderr, "candidate compilation was not isolated: %s\n", error);
+        return 6;
+    }
+
+    if (!morph_runtime_module_activate_candidate(
+            &module,
+            &host,
+            error,
+            sizeof(error)) ||
+        module.compiler == version_one_compiler ||
+        morph_runtime_module_has_candidate(&module) ||
+        !expect_active(
+            &module,
+            &host,
+            "version-two",
+            "version two: migrated 41")) {
+        fprintf(stderr, "stateful activation failed: %s\n", error);
+        return 7;
+    }
+
     morph_runtime_module_destroy(&module, &host);
-    puts("PASS: valid reload and invalid-candidate rollback");
+    puts("PASS: transactional activation, state migration, and rollback");
     return 0;
 }

@@ -177,6 +177,7 @@ int main(int argc, char **argv)
     int atlas_width;
     int atlas_height;
     int running = 1;
+    int reload_requested = 0;
     int exit_code = EXIT_FAILURE;
     float font_scale;
     Uint64 previous_ticks;
@@ -295,14 +296,7 @@ int main(int argc, char **argv)
 
             nk_layout_row_dynamic(&ctx, 34.0f, 1);
             if (nk_button_label(&ctx, "Recompile generated/app.c")) {
-                if (morph_runtime_module_reload(
-                        &module,
-                        &host,
-                        module_source,
-                        module_error,
-                        sizeof(module_error))) {
-                    module_error[0] = '\0';
-                }
+                reload_requested = 1;
             }
 
             if (module_error[0]) {
@@ -331,6 +325,22 @@ int main(int argc, char **argv)
                 layer,
                 background,
                 NK_ANTI_ALIASING_ON);
+        }
+
+        if (reload_requested) {
+            reload_requested = 0;
+            if (morph_runtime_module_compile_candidate(
+                    &module,
+                    module_source,
+                    module_error,
+                    sizeof(module_error)) &&
+                morph_runtime_module_activate_candidate(
+                    &module,
+                    &host,
+                    module_error,
+                    sizeof(module_error))) {
+                module_error[0] = '\0';
+            }
         }
     }
 
