@@ -249,9 +249,9 @@ The default frozen profile does not include TinyCC or llama.cpp. It statically
 links its included third-party runtime code and dynamically links only macOS
 system libraries/frameworks such as Foundation, Metal, and QuartzCore.
 
-Review each dependency's included license before redistribution. Morpheus itself
-does not currently have a root license file, so no license grant for the
-project's original code should be assumed until one is added.
+Review each dependency's included license before redistribution. Morpheus's
+original code is available under the [MIT License](LICENSE); bundled and
+submodule dependencies remain governed by their respective licenses.
 
 ## Project status and roadmap
 
