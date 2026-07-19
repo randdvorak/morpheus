@@ -10,6 +10,10 @@ printf '%s\n' 'int original_candidate;' > "$workspace/candidate.c"
 printf '%s\n' \
     'typedef struct morph_host { void (*ui_label)(struct morph_host *, const char *); } morph_host;' \
     > "$workspace/app_api.h"
+printf '%s\n' \
+    'void *morph_json_parse(const char *, unsigned long, void *);' \
+    'unsigned long morph_image_load_url(void *, const char *);' \
+    > "$workspace/sdk.h"
 : > "$workspace/model.txt"
 printf '%s\n' 'Replace the candidate for this test.' > "$workspace/prompt.txt"
 : > "$workspace/diagnostics.txt"

@@ -134,7 +134,7 @@ static int morph_agent_write_prompt(
     int failed = 0;
     const char *instructions =
         "Modify candidate.c to satisfy the user request below.\n"
-        "Only edit candidate.c. Read app_api.h for the required ABI.\n"
+        "Only edit candidate.c. Read app_api.h and sdk.h for the complete contract.\n"
         "Keep the implementation freestanding C accepted by TinyCC with "
         "-nostdlib -Wall -Werror.\n\nUser request:\n";
 
@@ -247,10 +247,12 @@ int morph_agent_session_begin(
     const char *request,
     const char *source_path,
     const char *api_header_path,
+    const char *sdk_header_path,
     char *error,
     unsigned long error_capacity)
 {
     char api_destination[MORPH_AGENT_PATH_CAPACITY];
+    char sdk_destination[MORPH_AGENT_PATH_CAPACITY];
     char model_destination[MORPH_AGENT_PATH_CAPACITY];
 
     if (session->status == MORPH_AGENT_RUNNING) {
@@ -292,6 +294,12 @@ int morph_agent_session_begin(
             session->run_directory,
             0) ||
         !morph_agent_path(
+            sdk_destination,
+            sizeof(sdk_destination),
+            "%s/sdk.h",
+            session->run_directory,
+            0) ||
+        !morph_agent_path(
             model_destination,
             sizeof(model_destination),
             "%s/model.txt",
@@ -302,6 +310,7 @@ int morph_agent_session_begin(
     return morph_agent_copy(source_path, session->source_before_path, error, error_capacity) &&
         morph_agent_copy(source_path, session->candidate_path, error, error_capacity) &&
         morph_agent_copy(api_header_path, api_destination, error, error_capacity) &&
+        morph_agent_copy(sdk_header_path, sdk_destination, error, error_capacity) &&
         morph_agent_write(
             model_destination,
             session->provider_model,

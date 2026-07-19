@@ -997,6 +997,7 @@ int main(int argc, char **argv)
                     agent_request,
                     agent_base_source,
                     MORPHEUS_SOURCE_ROOT "/include/morpheus/app_api.h",
+                    MORPHEUS_SOURCE_ROOT "/include/morpheus/sdk.h",
                     module_error,
                     sizeof(module_error)) &&
                 morph_agent_session_start_attempt(

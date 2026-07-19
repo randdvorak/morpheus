@@ -17,6 +17,7 @@ system_prompt_path=${MORPHEUS_OLLAMA_SYSTEM_PROMPT:-$script_directory/morpheus-o
 model_path=$workspace/model.txt
 candidate_path=$workspace/candidate.c
 api_path=$workspace/app_api.h
+sdk_path=$workspace/sdk.h
 request_path=$workspace/ollama-request.json
 raw_response_path=$workspace/ollama-response.json
 candidate_temporary=$workspace/candidate.c.ollama.tmp
@@ -26,8 +27,8 @@ if [ ! -x "$curl_executable" ] || [ ! -x "$jq_executable" ]; then
     echo "Ollama provider requires executable curl and jq commands" >&2
     exit 127
 fi
-if [ ! -s "$system_prompt_path" ] || [ ! -s "$api_path" ]; then
-    echo "Ollama provider requires a system prompt and app_api.h" >&2
+if [ ! -s "$system_prompt_path" ] || [ ! -s "$api_path" ] || [ ! -s "$sdk_path" ]; then
+    echo "Ollama provider requires a system prompt, app_api.h, and sdk.h" >&2
     exit 66
 fi
 
@@ -63,6 +64,7 @@ echo "Using Ollama model: $model"
     --arg keep_alive "$keep_alive" \
     --rawfile system_prompt "$system_prompt_path" \
     --rawfile api "$api_path" \
+    --rawfile sdk "$sdk_path" \
     --rawfile prompt "$prompt_path" \
     --rawfile source "$candidate_path" \
     '{
@@ -86,7 +88,7 @@ echo "Using Ollama model: $model"
         messages: [
             {
                 role: "system",
-                content: ($system_prompt + $api)
+                content: ($system_prompt + "\n\napp_api.h:\n" + $api + "\n\nsdk.h:\n" + $sdk)
             },
             {
                 role: "user",

@@ -8,7 +8,7 @@ provider RUN_DIRECTORY PROMPT_PATH DIAGNOSTICS_PATH RESPONSE_PATH
 ```
 
 The provider may read `request.txt`, the per-attempt `prompt.txt` and
-`diagnostics.txt`, `candidate.c`, and `app_api.h` inside the run directory.
+`diagnostics.txt`, `candidate.c`, `app_api.h`, and `sdk.h` inside the run directory.
 `PROMPT_PATH` is the exact composed prompt for the current attempt. It must
 restrict its source changes to
 `candidate.c`, write a human-readable final response to `RESPONSE_PATH`, and
@@ -114,8 +114,8 @@ arbitrary prose is still rejected.
 
 The version-controlled system prompt is
 `tools/morpheus-ollama-system-prompt.txt`. The adapter appends the exact
-per-run `app_api.h` to it, so the model receives the authoritative host
-capabilities instead of guessing or asking which API is available. Set
+per-run `app_api.h` and `sdk.h` to it, so the model receives the authoritative
+host capabilities instead of guessing or asking which API is available. Set
 `MORPHEUS_OLLAMA_SYSTEM_PROMPT` to use a different prompt file.
 
 Configuration environment variables:

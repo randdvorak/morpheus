@@ -37,7 +37,7 @@ static void cleanup(const morph_agent_session *session, const char *root)
         "diagnostics.txt", "prompt.txt", "response.txt", "provider.log", "candidate.c", "build.txt"
     };
     const char *run_files[] = {
-        "candidate.c", "source-before.c", "request.txt", "app_api.h", "model.txt", "patch.diff", "outcome.json"
+        "candidate.c", "source-before.c", "request.txt", "app_api.h", "sdk.h", "model.txt", "patch.diff", "outcome.json"
     };
     char path[MORPH_AGENT_PATH_CAPACITY];
     size_t index;
@@ -61,6 +61,8 @@ static void cleanup(const morph_agent_session *session, const char *root)
     unlink(path);
     snprintf(path, sizeof(path), "%s/api.h", root);
     unlink(path);
+    snprintf(path, sizeof(path), "%s/sdk.h", root);
+    unlink(path);
     snprintf(path, sizeof(path), "%s/accepted.c", root);
     unlink(path);
     rmdir(root);
@@ -71,6 +73,7 @@ int main(void)
     char root[] = "/private/tmp/morpheus-agent-XXXXXX";
     char source_path[MORPH_AGENT_PATH_CAPACITY];
     char api_path[MORPH_AGENT_PATH_CAPACITY];
+    char sdk_path[MORPH_AGENT_PATH_CAPACITY];
     char accepted_path[MORPH_AGENT_PATH_CAPACITY];
     char artifact_path[MORPH_AGENT_PATH_CAPACITY];
     char error[1024] = {0};
@@ -86,9 +89,11 @@ int main(void)
     morph_agent_session_reset(&session);
     snprintf(source_path, sizeof(source_path), "%s/source.c", root);
     snprintf(api_path, sizeof(api_path), "%s/api.h", root);
+    snprintf(sdk_path, sizeof(sdk_path), "%s/sdk.h", root);
     snprintf(accepted_path, sizeof(accepted_path), "%s/accepted.c", root);
     if (!write_file(source_path, "int original;\n") ||
         !write_file(api_path, "/* api */\n") ||
+        !write_file(sdk_path, "/* sdk */\n") ||
         !morph_agent_session_init(
             &session,
             root,
@@ -105,6 +110,7 @@ int main(void)
             "Add a visible label",
             source_path,
             api_path,
+            sdk_path,
             error,
             sizeof(error)) ||
         !morph_agent_session_start_attempt(
@@ -129,6 +135,7 @@ int main(void)
         !file_contains(session.candidate_path, "fake external agent edit") ||
         !file_contains(session.response_path, "candidate updated") ||
         !file_contains(session.prompt_path, "Add a visible label") ||
+        !file_contains(session.prompt_path, "app_api.h and sdk.h") ||
         !file_contains(session.prompt_path, "first diagnostic")) {
         fprintf(stderr, "external provider did not produce expected artifacts\n");
         cleanup(&session, root);

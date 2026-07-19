@@ -47,7 +47,7 @@ static void cleanup(const morph_agent_session *session, const char *root)
         "diagnostics.txt", "prompt.txt", "response.txt", "provider.log", "candidate.c", "build.txt"
     };
     const char *run_files[] = {
-        "candidate.c", "source-before.c", "request.txt", "app_api.h", "model.txt", "patch.diff", "outcome.json"
+        "candidate.c", "source-before.c", "request.txt", "app_api.h", "sdk.h", "model.txt", "patch.diff", "outcome.json"
     };
     char path[MORPH_AGENT_PATH_CAPACITY];
     unsigned int attempt;
@@ -105,6 +105,7 @@ int main(void)
             "produce a valid visible change",
             MORPHEUS_VALID_MODULE,
             MORPHEUS_API_HEADER,
+            MORPHEUS_SDK_HEADER,
             error,
             sizeof(error)) ||
         !morph_agent_session_start_attempt(&session, "", error, sizeof(error)) ||

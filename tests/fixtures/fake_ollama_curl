@@ -25,6 +25,10 @@ case "$url" in
                  (.messages[0].content | contains("Do not ask follow-up questions")) and
                  (.messages[0].content | contains("MORPHEUS_RENDER_NUKLEAR_WINDOWS")) and
                  (.messages[0].content | contains("ui_label")) and
+                 (.messages[0].content | contains("morph_json_parse")) and
+                 (.messages[0].content | contains("morph_image_load_url")) and
+                 (.messages[0].content | contains("snprintf, vsnprintf")) and
+                 (.messages[0].content | contains("versioned, pointer-free format")) and
                  (.messages[1].content | contains("Current candidate.c"))' \
                 "$request_path" >/dev/null; then
             echo "invalid Ollama request" >&2

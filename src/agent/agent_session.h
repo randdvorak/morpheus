@@ -45,6 +45,7 @@ int morph_agent_session_begin(
     const char *request,
     const char *source_path,
     const char *api_header_path,
+    const char *sdk_header_path,
     char *error,
     unsigned long error_capacity);
 int morph_agent_session_set_model(

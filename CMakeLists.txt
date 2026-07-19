@@ -568,6 +568,7 @@ if(BUILD_TESTING)
         MORPHEUS_REPAIR_AGENT_PATH="$<TARGET_FILE:morpheus_fake_repair_agent_provider>"
         MORPHEUS_VALID_MODULE="${CMAKE_SOURCE_DIR}/tests/fixtures/module_v1.c"
         MORPHEUS_API_HEADER="${CMAKE_SOURCE_DIR}/include/morpheus/app_api.h"
+        MORPHEUS_SDK_HEADER="${CMAKE_SOURCE_DIR}/include/morpheus/sdk.h"
     )
     target_compile_options(morpheus_agent_repair_loop_test PRIVATE
         -Wall

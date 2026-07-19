@@ -44,6 +44,10 @@ typedef struct morph_export_ui {
 } morph_export_ui;
 
 extern const morph_app_api *morph_app_entry(void);
+__attribute__((weak)) unsigned int morph_app_render_mode(void)
+{
+    return MORPHEUS_RENDER_EMBEDDED;
+}
 
 static void host_log(morph_host *host, const char *message)
 {
@@ -209,6 +213,7 @@ int main(void)
     morph_http_service *http = NULL;
     morph_image_service *images = NULL;
     const morph_app_api *api;
+    unsigned int render_mode = MORPHEUS_RENDER_EMBEDDED;
     void *state = NULL;
     const void *pixels;
     int atlas_width;
@@ -222,6 +227,11 @@ int main(void)
     if (!api || api->abi_version != MORPHEUS_APP_ABI_VERSION || !api->create ||
         !api->destroy || !api->update || !api->render_ui) {
         fprintf(stderr, "Exported application ABI is invalid\n");
+        return EXIT_FAILURE;
+    }
+    render_mode = morph_app_render_mode();
+    if (render_mode > MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
+        fprintf(stderr, "Exported application render mode is invalid\n");
         return EXIT_FAILURE;
     }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) return EXIT_FAILURE;
@@ -282,12 +292,16 @@ int main(void)
         morph_http_service_tick(http);
         morph_image_service_tick(images);
         api->update(&host, state, dt);
-        if (nk_begin(&ctx, api->name ? api->name : MORPHEUS_EXPORT_APP_NAME,
-                nk_rect(20, 20, WINDOW_WIDTH - 40, WINDOW_HEIGHT - 40),
-                NK_WINDOW_BORDER | NK_WINDOW_SCALABLE | NK_WINDOW_TITLE)) {
+        if (render_mode == MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
             api->render_ui(&host, state);
+        } else {
+            if (nk_begin(&ctx, api->name ? api->name : MORPHEUS_EXPORT_APP_NAME,
+                    nk_rect(20, 20, WINDOW_WIDTH - 40, WINDOW_HEIGHT - 40),
+                    NK_WINDOW_BORDER | NK_WINDOW_SCALABLE | NK_WINDOW_TITLE)) {
+                api->render_ui(&host, state);
+            }
+            nk_end(&ctx);
         }
-        nk_end(&ctx);
         SDL_GetWindowSize(window, &window_width, &window_height);
         SDL_GetWindowSizeInPixels(window, &pixel_width, &pixel_height);
         layer.drawableSize = CGSizeMake(pixel_width, pixel_height);

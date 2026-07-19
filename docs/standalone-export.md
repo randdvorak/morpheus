@@ -41,4 +41,6 @@ the generated app remains responsible for versioning and migrating its payload.
 
 The first frozen profile exposes HTTP, JSON, and image capabilities. It links
 SDL, Nuklear, yyjson, and stb into the executable and dynamically links only
-macOS system libraries and frameworks.
+macOS system libraries and frameworks. It honors the same optional
+`morph_app_render_mode` export as the development host, so full-window Nuklear
+applications are not placed inside an extra host-owned window after export.

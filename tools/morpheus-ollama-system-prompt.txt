@@ -17,8 +17,9 @@ Hard requirements:
   capabilities. The approved freestanding C runtime subset is available:
   malloc, calloc, realloc, free; memcpy, memmove, memset, memcmp; strlen,
   strcmp, strncmp, strcpy, strncpy, strchr, strrchr; strtol, strtoul, strtod,
-  atoi, atof; and qsort/bsearch. Keep allocations bounded and free owned memory
-  in destroy. Do not assume other libc functions are available.
+  atoi, atof; snprintf, vsnprintf; and qsort/bsearch. Keep allocations bounded
+  and free owned memory in destroy. Do not assume other libc functions are
+  available.
 - host->nuklear is the live struct nk_context. The complete public Nuklear API
   declared by nuklear.h is linked into candidate.c, including windows, layout,
   labels, buttons, options, selectors, checkboxes, sliders, progress bars,
@@ -49,20 +50,48 @@ Hard requirements:
   result->error, and cancel finished or abandoned requests with
   morph_http_cancel. Never block render_ui waiting for network I/O.
 - Keep request and response buffers bounded, validate HTTP status codes, and do
-  not assume host->http is non-null.
+  not assume host->http is non-null. HTTP result strings are borrowed until the
+  request is cancelled or its slot is reused; copy any data needed afterward.
+- The HTTP service accepts only HTTP/HTTPS, permits at most 8 live requests,
+  follows at most 5 redirects, and limits each response body to 1 MiB. Treat a
+  zero request ID as failure and always cancel completed or abandoned requests.
+- Use the opaque morph_json_* facade for JSON. Parsed values are borrowed from
+  their morph_json_document and become invalid when it is freed. Check each
+  value's type and every typed getter; do not retain borrowed strings after
+  freeing the document. Mutable values belong to one builder and may be attached
+  only once. Free serialized morph_json_buffer data with morph_json_buffer_free.
+- host->images is an optional host-owned image service. Use morph_image_load_url
+  or morph_image_load_memory, poll outside render_ui with morph_image_poll, draw
+  a ready image into the current Nuklear layout cell with morph_image_draw, and
+  release every image ID with morph_image_release. Do not assume host->images is
+  non-null or retain platform texture handles. Image URLs are asynchronous.
+- Image inputs are limited to 1 MiB encoded, 4096 pixels per dimension, 16
+  megapixels decoded, and 64 live image jobs. Treat a zero image ID as failure.
 - Do not call SDL, operating-system APIs, undeclared functions, or invent host
   capabilities outside Morpheus, the approved C runtime subset, and public
   Nuklear.
-- Keep application-owned storage static or explicitly allocated from the approved
-  subset; free every allocation owned by the app in destroy.
-- create must initialize state and assign *state. Every callback must tolerate
-  only the state representation it establishes.
-- Keep save_state and load_state valid. When changing the state layout, handle
-  older saved sizes safely so hot-loaded previews can activate.
-- Export a static morph_app_api using MORPHEUS_APP_ABI_VERSION and return it from
-  morph_app_entry. Export morph_app_render_mode for full-window Nuklear UI.
+- Keep application-owned storage static or explicitly allocated from the
+  approved subset. create, destroy, update, and render_ui must all be non-null so
+  the source works in both live preview and frozen exports. create must initialize
+  state and assign *state; destroy must cancel requests, release images, free JSON
+  documents/builders, and release every app-owned allocation.
+- update receives elapsed seconds as dt. Advance asynchronous work and bounded
+  application logic there; never perform blocking work in update or render_ui.
+- Keep save_state and load_state valid for reload and standalone persistence.
+  save_state output is copied before the callback returns, but a non-empty output
+  must point to stable app-owned memory, never stack memory. load_state runs after
+  create, receives untrusted bytes, may replace *state, and must validate lengths
+  before reading. Use a versioned, pointer-free format and accept older versions
+  or sizes safely when the state layout changes.
+- The app name and morph_app_api storage must have static lifetime. Initialize a
+  static const morph_app_api with MORPHEUS_APP_ABI_VERSION and return its address
+  from the externally visible morph_app_entry function. Export
+  morph_app_render_mode only when full-window Nuklear UI is needed.
+- Do not embed API keys, access tokens, passwords, or other secrets in source,
+  state, URLs, logs, or UI. Explain in summary when a request needs a host secret
+  capability that is not available.
 - Change only what the request requires and preserve working behavior otherwise.
 - Treat compiler or activation diagnostics as mandatory repair instructions.
 
-The exact host contract for this run follows. It is authoritative; do not assume
-any API that is not declared here:
+The exact app ABI and SDK contract for this run follows. It is authoritative;
+do not assume any API that is not declared there:
