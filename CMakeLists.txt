@@ -58,6 +58,7 @@ include(ExternalProject)
 find_program(MORPHEUS_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
 find_program(MORPHEUS_PATCH_EXECUTABLE NAMES patch REQUIRED)
 find_program(MORPHEUS_CODESIGN_EXECUTABLE NAMES codesign REQUIRED)
+find_program(MORPHEUS_STRIP_EXECUTABLE NAMES strip REQUIRED)
 find_program(MORPHEUS_XCRUN_EXECUTABLE NAMES xcrun REQUIRED)
 execute_process(
     COMMAND "${MORPHEUS_XCRUN_EXECUTABLE}" --find actool
@@ -291,9 +292,14 @@ target_compile_options(morpheus_frozen PRIVATE
     -Wall
     -Wextra
     -Wpedantic
+    -ffunction-sections
+    -fdata-sections
     $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>
     $<$<COMPILE_LANGUAGE:OBJC>:-Wno-c23-extensions>
     $<$<COMPILE_LANGUAGE:OBJC>:-Wno-unused-but-set-variable>
+)
+target_link_options(morpheus_frozen PRIVATE
+    "-Wl,-dead_strip"
 )
 target_link_libraries(morpheus_frozen PRIVATE
     yyjson
@@ -312,6 +318,8 @@ set_target_properties(morpheus_frozen PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION "${MORPHEUS_EXPORT_APP_VERSION}"
 )
 add_custom_command(TARGET morpheus_frozen POST_BUILD
+    COMMAND "${MORPHEUS_STRIP_EXECUTABLE}" -S -x
+        "$<TARGET_FILE:morpheus_frozen>"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
         "$<TARGET_BUNDLE_CONTENT_DIR:morpheus_frozen>/Resources/assets"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory

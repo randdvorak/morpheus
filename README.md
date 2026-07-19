@@ -198,10 +198,11 @@ tools/morpheus-export /path/to/MyApp.app
 ```
 
 The exporter refuses to overwrite an existing destination. It performs a
-separate Clang build, copies assets and a versioned manifest, and ad-hoc signs
-the resulting bundle. The frozen profile omits TinyCC, agents, llama.cpp,
-revision controls, and the development UI. Runtime state is written atomically
-to `~/Library/Application Support/<bundle-id>/state.bin` rather than into the
+separate Clang build with dead-code elimination, strips local/debug symbols,
+copies assets and a versioned manifest, and ad-hoc signs the resulting bundle.
+The frozen profile omits TinyCC, agents, llama.cpp, revision controls, and the
+development UI. Runtime state is written atomically to
+`~/Library/Application Support/<bundle-id>/state.bin` rather than into the
 signed bundle.
 
 Developer ID signing, notarization, stapling, archive/installer creation, and

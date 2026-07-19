@@ -7,6 +7,8 @@
   "application_version": "@MORPHEUS_EXPORT_APP_VERSION@",
   "source_sha256": "@MORPHEUS_FROZEN_SOURCE_SHA256@",
   "profile": "frozen",
+  "link_time_dead_strip": true,
+  "symbols_stripped": true,
   "capabilities": ["http", "json", "images"],
   "dependencies": {
     "sdl": "@MORPHEUS_EXPORT_SDL_REVISION@",

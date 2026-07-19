@@ -27,11 +27,13 @@ MORPHEUS_EXPORT_VERSION="1.0.0" \
 tools/morpheus-export /path/to/FXRates.app
 ```
 
-The command performs a Clang ahead-of-time build, copies generated assets into
-`Contents/Resources/assets`, writes a versioned export manifest, copies the
-bundle to the requested destination, and applies and verifies an ad-hoc
-hardened-runtime signature. Developer ID signing and notarization remain a
-distribution step.
+The command performs a Clang ahead-of-time build with link-time dead-code
+elimination, removes local and debug symbols from the resulting executable,
+copies generated assets into `Contents/Resources/assets`, writes a versioned
+export manifest, copies the bundle to the requested destination, and applies
+and verifies an ad-hoc hardened-runtime signature. Stripping happens before
+signing so the final signature covers the exact distributed executable.
+Developer ID signing and notarization remain a distribution step.
 
 At runtime, mutable state is stored atomically under
 `~/Library/Application Support/<bundle-id>/state.bin`, outside the signed
