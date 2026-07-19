@@ -13,10 +13,13 @@ if [ ! -x "$codex_executable" ]; then
 fi
 
 # Anchor Codex repository discovery at this isolated run directory. The outer
-# macOS sandbox prevents agent shell commands from traversing the user's home
-# directory (including Photos, iCloud Drive, Desktop, and Documents).
+# macOS sandbox prevents agent shell commands from traversing protected user
+# locations while leaving Codex's own ~/.codex bootstrap files available.
 /usr/bin/git -C "$workspace" init -q
-privacy_profile='(version 1) (allow default) (deny file-read* (subpath "/Users"))'
+privacy_profile='(version 1)
+    (allow default)
+    (deny file-read* (regex #"^/Users/[^/]+/(Desktop|Documents|Downloads|Movies|Music|Pictures)(/|$)"))
+    (deny file-read* (regex #"^/Users/[^/]+/Library(/|$)"))'
 
 /bin/cat "$prompt_path" | /usr/bin/sandbox-exec -p "$privacy_profile" "$codex_executable" \
     --ask-for-approval never \
