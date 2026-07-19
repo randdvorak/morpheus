@@ -248,6 +248,10 @@ Additional safeguards should include:
 - Structured logging associated with source revisions
 - State serialization before every swap
 - An emergency safe mode that starts without loading the latest module
+- An outer operating-system sandbox around coding-agent providers. On macOS,
+  the Codex provider denies all reads under `/Users`, preventing agent shell
+  commands from traversing Photos, iCloud Drive, Desktop, or Documents even
+  though Codex's own `workspace-write` policy permits broad read access.
 
 ## Window and Rendering Layer
 
