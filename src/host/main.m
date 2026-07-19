@@ -24,6 +24,7 @@
 #include "image_service.h"
 #include "revision_store.h"
 #include "agent_session.h"
+#include "theme.h"
 
 #define WINDOW_WIDTH 1200
 #define WINDOW_HEIGHT 800
@@ -252,7 +253,7 @@ int main(int argc, char **argv)
     struct nk_font_atlas atlas;
     struct nk_font *font;
     struct nk_metal metal;
-    struct nk_colorf background = {0.06f, 0.08f, 0.11f, 1.0f};
+    struct nk_colorf background = {0.92f, 0.95f, 0.98f, 1.0f};
     morph_ui_context ui;
     morph_host host;
     morph_runtime_module module;
@@ -365,6 +366,7 @@ int main(int argc, char **argv)
     layer.displaySyncEnabled = YES;
 
     nk_init_default(&ctx, NULL);
+    morph_apply_light_theme(&ctx);
     ctx.clip.copy = clipboard_copy;
     ctx.clip.paste = clipboard_paste;
     font_scale = SDL_GetWindowDisplayScale(window);
