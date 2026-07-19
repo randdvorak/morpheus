@@ -10,11 +10,11 @@ From the repository root:
 tools/morpheus-export /path/to/MyApp.app
 ```
 
-The default input is `generated/app.c`. A specific accepted revision may be
-provided as the second argument:
+The default input is the active project selected in Morpheus. A specific
+accepted revision may be provided as the second argument:
 
 ```sh
-tools/morpheus-export /path/to/MyApp.app generated/revisions/00000004/app.c
+tools/morpheus-export /path/to/MyApp.app projects/my-app/revisions/00000004/app.c
 ```
 
 The exporter refuses to replace an existing destination. Display metadata can

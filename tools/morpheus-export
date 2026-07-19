@@ -4,7 +4,15 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 output_path=${1:-"$source_root/build/exports/MorpheusFrozen.app"}
-source_path=${2:-"$source_root/generated/app.c"}
+if [ "$#" -ge 2 ]; then
+    source_path=$2
+elif [ -f "$source_root/projects/.active-project" ]; then
+    active_project=$(sed -n '1p' "$source_root/projects/.active-project")
+    source_path="$source_root/projects/$active_project/app.c"
+else
+    source_path="$source_root/generated/app.c"
+fi
+assets_path=$(dirname -- "$source_path")/assets
 app_name=${MORPHEUS_EXPORT_NAME:-"Morpheus App"}
 bundle_id=${MORPHEUS_EXPORT_BUNDLE_ID:-"dev.morpheus.exported"}
 app_version=${MORPHEUS_EXPORT_VERSION:-"1.0.0"}
@@ -22,6 +30,7 @@ fi
 cmake -S "$source_root" -B "$export_build" \
     -DBUILD_TESTING=OFF \
     -DMORPHEUS_FROZEN_SOURCE="$source_path" \
+    -DMORPHEUS_EXPORT_ASSETS="$assets_path" \
     -DMORPHEUS_EXPORT_APP_NAME="$app_name" \
     -DMORPHEUS_EXPORT_BUNDLE_ID="$bundle_id" \
     -DMORPHEUS_EXPORT_APP_VERSION="$app_version"

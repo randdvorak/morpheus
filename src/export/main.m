@@ -203,7 +203,7 @@ int main(void)
     struct nk_font_atlas atlas;
     struct nk_font *font;
     struct nk_metal metal;
-    struct nk_colorf background = {0.92f, 0.95f, 0.98f, 1.0f};
+    struct nk_colorf background = {0.22f, 0.27f, 0.33f, 1.0f};
     morph_export_ui ui;
     morph_host host = {0};
     morph_http_service *http = NULL;

@@ -180,9 +180,7 @@ target_compile_options(morpheus_stb_image PRIVATE
     -Wpedantic
 )
 
-if(NOT EXISTS "${MORPHEUS_FROZEN_SOURCE}")
-    message(FATAL_ERROR "Frozen application source does not exist: ${MORPHEUS_FROZEN_SOURCE}")
-endif()
+if(EXISTS "${MORPHEUS_FROZEN_SOURCE}")
 file(SHA256 "${MORPHEUS_FROZEN_SOURCE}" MORPHEUS_FROZEN_SOURCE_SHA256)
 foreach(MORPHEUS_EXPORT_DEPENDENCY SDL Nuklear third_party/yyjson third_party/stb)
     string(REPLACE "/" "_" MORPHEUS_EXPORT_DEPENDENCY_KEY "${MORPHEUS_EXPORT_DEPENDENCY}")
@@ -253,6 +251,10 @@ add_custom_command(TARGET morpheus_frozen POST_BUILD
         "$<TARGET_BUNDLE_CONTENT_DIR:morpheus_frozen>/Resources/export-manifest.json"
     VERBATIM
 )
+else()
+    message(STATUS
+        "Frozen export target disabled; source not found: ${MORPHEUS_FROZEN_SOURCE}")
+endif()
 
 add_executable(morpheus MACOSX_BUNDLE
     src/host/main.m
@@ -262,6 +264,7 @@ add_executable(morpheus MACOSX_BUNDLE
     src/agent/agent_session.c
     src/compiler/runtime_module.c
     src/project/revision_store.c
+    src/project/project_store.c
 )
 add_dependencies(morpheus morpheus_tinycc)
 
@@ -398,6 +401,20 @@ if(BUILD_TESTING)
         -Wpedantic
     )
     add_test(NAME revision_store COMMAND morpheus_revision_store_test)
+
+    add_executable(morpheus_project_store_test
+        tests/project_store_test.c
+        src/project/project_store.c
+    )
+    target_include_directories(morpheus_project_store_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/project"
+    )
+    target_compile_options(morpheus_project_store_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    add_test(NAME project_store COMMAND morpheus_project_store_test)
 
     add_executable(morpheus_sqlite_test tests/sqlite_test.c)
     add_dependencies(morpheus_sqlite_test morpheus_sqlite_external)

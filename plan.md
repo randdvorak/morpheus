@@ -577,3 +577,10 @@ Initial frozen-export vertical slice implemented:
 - Export validation has proven an ad-hoc signed bundle can be relocated under
   `/private/tmp`, contains no checkout/build paths, links no dynamic third-party
   libraries, and launches with an isolated writable data directory.
+
+Named development workspaces are stored under `projects/`. Morpheus creates a
+starter project when none exist, persists the active selection, and can create
+or switch applications from the host UI. Each project owns its source, assets,
+agent files, revision history, and state independently. The legacy explicit
+`MORPHEUS_MODULE_SOURCE` and `MORPHEUS_WORKSPACE_ROOT` overrides remain
+available for tests and advanced workflows.

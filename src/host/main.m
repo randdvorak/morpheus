@@ -23,6 +23,7 @@
 #include "http_service.h"
 #include "image_service.h"
 #include "revision_store.h"
+#include "project_store.h"
 #include "agent_session.h"
 #include "theme.h"
 
@@ -253,11 +254,12 @@ int main(int argc, char **argv)
     struct nk_font_atlas atlas;
     struct nk_font *font;
     struct nk_metal metal;
-    struct nk_colorf background = {0.92f, 0.95f, 0.98f, 1.0f};
+    struct nk_colorf background = {0.22f, 0.27f, 0.33f, 1.0f};
     morph_ui_context ui;
     morph_host host;
     morph_runtime_module module;
     morph_revision_store revisions;
+    morph_project_store projects;
     morph_agent_session agent_session;
     morph_http_service *http_service = NULL;
     morph_image_service *image_service = NULL;
@@ -268,9 +270,12 @@ int main(int argc, char **argv)
     char ollama_model[MORPH_AGENT_MODEL_CAPACITY] = {0};
     char agent_status[256] = "Agent ready";
     char agent_root[MORPH_AGENT_PATH_CAPACITY];
+    char module_source[MORPH_PROJECT_PATH_CAPACITY];
+    char workspace_root[MORPH_PROJECT_PATH_CAPACITY];
+    char assets_root[MORPH_PROJECT_PATH_CAPACITY];
+    char new_project_name[MORPH_PROJECT_NAME_CAPACITY] = {0};
+    char projects_root[MORPH_PROJECT_PATH_CAPACITY];
     const char *agent_provider_path;
-    const char *module_source;
-    const char *workspace_root;
     const char *agent_backend;
     const char *configured_ollama_model;
     const void *pixels;
@@ -281,6 +286,10 @@ int main(int argc, char **argv)
     int rollback_requested = 0;
     int agent_request_length = 0;
     int ollama_model_length = 0;
+    int new_project_name_length = 0;
+    int project_switch_requested = -1;
+    int project_create_requested = 0;
+    int projects_enabled = 0;
     int agent_submit_requested = 0;
     int agent_accept_requested = 0;
     int agent_reject_requested = 0;
@@ -300,13 +309,26 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
-    module_source = getenv("MORPHEUS_MODULE_SOURCE");
-    if (!module_source || !*module_source) {
-        module_source = MORPHEUS_SOURCE_ROOT "/generated/app.c";
-    }
-    workspace_root = getenv("MORPHEUS_WORKSPACE_ROOT");
-    if (!workspace_root || !*workspace_root) {
-        workspace_root = MORPHEUS_SOURCE_ROOT "/generated";
+    const char *module_override = getenv("MORPHEUS_MODULE_SOURCE");
+    const char *workspace_override = getenv("MORPHEUS_WORKSPACE_ROOT");
+    if (module_override && *module_override && workspace_override && *workspace_override) {
+        snprintf(module_source, sizeof(module_source), "%s", module_override);
+        snprintf(workspace_root, sizeof(workspace_root), "%s", workspace_override);
+        snprintf(assets_root, sizeof(assets_root), "%s/assets", workspace_root);
+    } else {
+        const char *root_override = getenv("MORPHEUS_PROJECTS_ROOT");
+        snprintf(projects_root, sizeof(projects_root), "%s",
+            root_override && *root_override ? root_override : MORPHEUS_SOURCE_ROOT "/projects");
+        projects_enabled = morph_project_store_init(
+            &projects, projects_root, store_error, sizeof(store_error));
+        if (!projects_enabled || !morph_project_store_paths(
+                &projects,
+                workspace_root, sizeof(workspace_root),
+                module_source, sizeof(module_source),
+                assets_root, sizeof(assets_root))) {
+            fprintf(stderr, "Unable to initialize projects: %s\n", store_error);
+            return EXIT_FAILURE;
+        }
     }
     agent_provider_path = getenv("MORPHEUS_AGENT_PROVIDER");
     agent_provider_is_custom = agent_provider_path && *agent_provider_path;
@@ -561,6 +583,39 @@ int main(int argc, char **argv)
                 NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
             nk_layout_row_dynamic(&ctx, 28.0f, 1);
             nk_label(&ctx, "Native host: SDL3 + Metal + Nuklear", NK_TEXT_LEFT);
+            if (projects_enabled) {
+                const char *project_names[MORPH_PROJECT_MAX_PROJECTS];
+                unsigned int project_index;
+                int selected;
+                for (project_index = 0; project_index < projects.count; ++project_index) {
+                    project_names[project_index] = projects.projects[project_index].name;
+                }
+                nk_layout_row_dynamic(&ctx, 28.0f, 1);
+                selected = nk_combo(
+                    &ctx,
+                    project_names,
+                    (int)projects.count,
+                    (int)projects.active_index,
+                    28,
+                    nk_vec2(300.0f, 220.0f));
+                if (selected != (int)projects.active_index &&
+                    !agent_preview_active && agent_session.status != MORPH_AGENT_RUNNING) {
+                    project_switch_requested = selected;
+                }
+                nk_layout_row_dynamic(&ctx, 30.0f, 2);
+                nk_edit_string(
+                    &ctx,
+                    NK_EDIT_FIELD,
+                    new_project_name,
+                    &new_project_name_length,
+                    (int)sizeof(new_project_name) - 1,
+                    nk_filter_default);
+                new_project_name[new_project_name_length] = '\0';
+                if (nk_button_label(&ctx, "New App") && new_project_name_length > 0 &&
+                    !agent_preview_active && agent_session.status != MORPH_AGENT_RUNNING) {
+                    project_create_requested = 1;
+                }
+            }
             nk_label(&ctx,
                 module.api ? "Runtime C module: active" : "Runtime C module: unavailable",
                 NK_TEXT_LEFT);
@@ -585,7 +640,7 @@ int main(int argc, char **argv)
             nk_layout_row_dynamic(&ctx, 34.0f, 1);
             if (!agent_preview_active &&
                 agent_session.status != MORPH_AGENT_RUNNING &&
-                nk_button_label(&ctx, "Recompile generated/app.c")) {
+                nk_button_label(&ctx, "Recompile current app")) {
                 reload_requested = 1;
             }
             if (!agent_preview_active &&
@@ -694,7 +749,110 @@ int main(int argc, char **argv)
                 NK_ANTI_ALIASING_ON);
         }
 
-        if (agent_toggle_provider_requested) {
+        if (project_create_requested) {
+            project_create_requested = 0;
+            if (morph_project_store_create(
+                    &projects,
+                    new_project_name,
+                    module_error,
+                    sizeof(module_error))) {
+                project_switch_requested = (int)projects.active_index;
+                new_project_name_length = 0;
+                new_project_name[0] = '\0';
+            }
+        }
+
+        if (project_switch_requested >= 0) {
+            char accepted_source[MORPH_REVISION_PATH_CAPACITY];
+            void *accepted_state = NULL;
+            unsigned long accepted_state_size = 0;
+            int selected_loaded = 0;
+            unsigned int selected_index = (unsigned int)project_switch_requested;
+            project_switch_requested = -1;
+
+            if (module.api && revision_store_ready) {
+                (void)checkpoint_active_module(
+                    &revisions, &module, &host, module_source,
+                    store_error, sizeof(store_error));
+                (void)morph_revision_store_end_session(
+                    &revisions, store_error, sizeof(store_error));
+            }
+            morph_runtime_module_destroy(&module, &host);
+            morph_runtime_module_init(&module);
+            morph_agent_session_cancel(&agent_session);
+            morph_agent_session_reset(&agent_session);
+            free(preview_restore_state);
+            preview_restore_state = NULL;
+            preview_restore_state_size = 0;
+            agent_preview_active = 0;
+            recovered_from_crash = 0;
+
+            if (!morph_project_store_select(
+                    &projects, selected_index, module_error, sizeof(module_error)) ||
+                !morph_project_store_paths(
+                    &projects,
+                    workspace_root, sizeof(workspace_root),
+                    module_source, sizeof(module_source),
+                    assets_root, sizeof(assets_root))) {
+                revision_store_ready = 0;
+                agent_ready = 0;
+            } else {
+                snprintf(agent_root, sizeof(agent_root), "%s/agent", workspace_root);
+                revision_store_ready = morph_revision_store_init(
+                    &revisions, workspace_root, store_error, sizeof(store_error));
+                if (revision_store_ready) {
+                    revision_store_ready = morph_revision_store_begin_session(
+                        &revisions, &recovered_from_crash,
+                        store_error, sizeof(store_error));
+                }
+                agent_ready = revision_store_ready && morph_agent_session_init(
+                    &agent_session, agent_root, agent_provider_path,
+                    store_error, sizeof(store_error));
+                if (agent_ready) {
+                    agent_ready = morph_agent_session_set_model(
+                        &agent_session,
+                        agent_uses_ollama ? ollama_model : "",
+                        store_error,
+                        sizeof(store_error));
+                }
+                if (revision_store_ready && revisions.active_revision) {
+                    selected_loaded = morph_revision_store_load(
+                            &revisions,
+                            revisions.active_revision,
+                            accepted_source,
+                            sizeof(accepted_source),
+                            &accepted_state,
+                            &accepted_state_size,
+                            module_error,
+                            sizeof(module_error)) &&
+                        morph_runtime_module_compile_candidate(
+                            &module, accepted_source,
+                            module_error, sizeof(module_error)) &&
+                        morph_runtime_module_activate_candidate_with_state(
+                            &module, &host,
+                            accepted_state, accepted_state_size,
+                            module_error, sizeof(module_error));
+                    morph_revision_store_release_state(accepted_state);
+                }
+                if (!selected_loaded) {
+                    selected_loaded = morph_runtime_module_reload(
+                        &module, &host, module_source,
+                        module_error, sizeof(module_error));
+                    if (selected_loaded && revision_store_ready) {
+                        selected_loaded = checkpoint_active_module(
+                                &revisions, &module, &host, module_source,
+                                module_error, sizeof(module_error)) &&
+                            morph_revision_store_refresh_session(
+                                &revisions, module_error, sizeof(module_error));
+                    }
+                }
+                snprintf(
+                    agent_status,
+                    sizeof(agent_status),
+                    selected_loaded ? "Project ready" : "Project failed to load");
+                if (selected_loaded) module_error[0] = '\0';
+            }
+        } else if (agent_toggle_provider_requested) {
             agent_toggle_provider_requested = 0;
             agent_uses_ollama = !agent_uses_ollama;
             agent_provider_path = agent_uses_ollama
