@@ -251,9 +251,10 @@ Additional safeguards should include:
 - An outer operating-system sandbox around coding-agent providers. On macOS,
   the Codex provider denies reads of protected home locations (including
   Photos, iCloud Drive, Desktop, Documents, Downloads, media folders, and the
-  user Library) while retaining access to Codex's own bootstrap files. This
-  constrains agent shell commands even though Codex's `workspace-write` policy
-  otherwise permits broad read access.
+  user Library) while retaining access to Codex's own bootstrap files. Codex's
+  internal command sandbox is bypassed because macOS does not permit it to
+  initialize inside the outer sandbox; provider code therefore remains part of
+  the trusted development environment until stricter write isolation is added.
 
 ## Window and Rendering Layer
 
