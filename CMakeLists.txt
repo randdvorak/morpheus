@@ -9,6 +9,22 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build third-party libraries statically" FORCE)
 
+set(MORPHEUS_FROZEN_SOURCE "${CMAKE_SOURCE_DIR}/generated/app.c"
+    CACHE FILEPATH "Accepted generated C source for the frozen export")
+set(MORPHEUS_EXPORT_APP_NAME "Morpheus App"
+    CACHE STRING "Display name for the frozen application")
+set(MORPHEUS_EXPORT_BUNDLE_ID "dev.morpheus.exported"
+    CACHE STRING "Bundle identifier for the frozen application")
+set(MORPHEUS_EXPORT_APP_VERSION "1.0.0"
+    CACHE STRING "Version for the frozen application")
+set(MORPHEUS_EXPORT_ASSETS "${CMAKE_SOURCE_DIR}/generated/assets"
+    CACHE PATH "Asset directory copied into the frozen application")
+if(MORPHEUS_EXPORT_APP_NAME MATCHES "[\"\\\\\r\n]" OR
+   NOT MORPHEUS_EXPORT_BUNDLE_ID MATCHES "^[A-Za-z0-9.-]+$" OR
+   NOT MORPHEUS_EXPORT_APP_VERSION MATCHES "^[A-Za-z0-9.-]+$")
+    message(FATAL_ERROR "Frozen export metadata contains unsupported characters")
+endif()
+
 file(STRINGS
     "${CMAKE_SOURCE_DIR}/Nuklear/nuklear.h"
     MORPHEUS_NUKLEAR_API_LINES
@@ -162,6 +178,80 @@ target_compile_options(morpheus_stb_image PRIVATE
     -Wall
     -Wextra
     -Wpedantic
+)
+
+if(NOT EXISTS "${MORPHEUS_FROZEN_SOURCE}")
+    message(FATAL_ERROR "Frozen application source does not exist: ${MORPHEUS_FROZEN_SOURCE}")
+endif()
+file(SHA256 "${MORPHEUS_FROZEN_SOURCE}" MORPHEUS_FROZEN_SOURCE_SHA256)
+foreach(MORPHEUS_EXPORT_DEPENDENCY SDL Nuklear third_party/yyjson third_party/stb)
+    string(REPLACE "/" "_" MORPHEUS_EXPORT_DEPENDENCY_KEY "${MORPHEUS_EXPORT_DEPENDENCY}")
+    string(TOUPPER "${MORPHEUS_EXPORT_DEPENDENCY_KEY}" MORPHEUS_EXPORT_DEPENDENCY_KEY)
+    execute_process(
+        COMMAND git -C "${CMAKE_SOURCE_DIR}/${MORPHEUS_EXPORT_DEPENDENCY}" rev-parse HEAD
+        OUTPUT_VARIABLE "MORPHEUS_EXPORT_${MORPHEUS_EXPORT_DEPENDENCY_KEY}_REVISION"
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+endforeach()
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/export-manifest.json.in"
+    "${CMAKE_BINARY_DIR}/generated/export-manifest.json"
+    @ONLY
+)
+
+add_executable(morpheus_frozen MACOSX_BUNDLE EXCLUDE_FROM_ALL
+    src/export/main.m
+    "${MORPHEUS_FROZEN_SOURCE}"
+    src/host/http_service.m
+    src/host/image_service.m
+    src/host/json_service.c
+)
+target_include_directories(morpheus_frozen PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/Nuklear"
+    "${CMAKE_SOURCE_DIR}/Nuklear/demo/metal"
+    "${CMAKE_SOURCE_DIR}/src/host"
+    "${CMAKE_SOURCE_DIR}/third_party/stb"
+)
+target_compile_definitions(morpheus_frozen PRIVATE
+    MORPHEUS_EXPORT_APP_NAME="${MORPHEUS_EXPORT_APP_NAME}"
+    MORPHEUS_EXPORT_BUNDLE_ID="${MORPHEUS_EXPORT_BUNDLE_ID}"
+)
+target_compile_options(morpheus_frozen PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>
+    $<$<COMPILE_LANGUAGE:OBJC>:-Wno-c23-extensions>
+    $<$<COMPILE_LANGUAGE:OBJC>:-Wno-unused-but-set-variable>
+)
+target_link_libraries(morpheus_frozen PRIVATE
+    yyjson
+    morpheus_stb_image
+    SDL3::SDL3-static
+    "-framework Metal"
+    "-framework QuartzCore"
+    "-framework Foundation"
+)
+set_target_properties(morpheus_frozen PROPERTIES
+    OUTPUT_NAME "MorpheusFrozen"
+    MACOSX_BUNDLE_BUNDLE_NAME "${MORPHEUS_EXPORT_APP_NAME}"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "${MORPHEUS_EXPORT_BUNDLE_ID}"
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/FrozenInfo.plist.in"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${MORPHEUS_EXPORT_APP_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${MORPHEUS_EXPORT_APP_VERSION}"
+)
+add_custom_command(TARGET morpheus_frozen POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_BUNDLE_CONTENT_DIR:morpheus_frozen>/Resources/assets"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${MORPHEUS_EXPORT_ASSETS}"
+        "$<TARGET_BUNDLE_CONTENT_DIR:morpheus_frozen>/Resources/assets"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_BINARY_DIR}/generated/export-manifest.json"
+        "$<TARGET_BUNDLE_CONTENT_DIR:morpheus_frozen>/Resources/export-manifest.json"
+    VERBATIM
 )
 
 add_executable(morpheus MACOSX_BUNDLE

@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "host_abi": 3,
+  "app_abi": 3,
+  "application_name": "@MORPHEUS_EXPORT_APP_NAME@",
+  "bundle_identifier": "@MORPHEUS_EXPORT_BUNDLE_ID@",
+  "application_version": "@MORPHEUS_EXPORT_APP_VERSION@",
+  "source_sha256": "@MORPHEUS_FROZEN_SOURCE_SHA256@",
+  "profile": "frozen",
+  "capabilities": ["http", "json", "images"],
+  "dependencies": {
+    "sdl": "@MORPHEUS_EXPORT_SDL_REVISION@",
+    "nuklear": "@MORPHEUS_EXPORT_NUKLEAR_REVISION@",
+    "yyjson": "@MORPHEUS_EXPORT_THIRD_PARTY_YYJSON_REVISION@",
+    "stb": "@MORPHEUS_EXPORT_THIRD_PARTY_STB_REVISION@"
+  },
+  "dynamic_third_party_libraries": false
+}

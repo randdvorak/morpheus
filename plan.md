@@ -561,3 +561,19 @@ Build the first frozen-export vertical slice from the current accepted revision:
 
 This slice proves the defining product promise: an application created and
 accepted inside Morpheus can leave Morpheus and run independently.
+
+Initial frozen-export vertical slice implemented:
+
+- `tools/morpheus-export` performs a separate Clang AOT build from accepted C
+  source and refuses to overwrite an existing destination.
+- The minimal frozen host omits TinyCC, agents, revisions, llama.cpp, and all
+  development UI while retaining the HTTP, JSON, image, Nuklear, SDL, and Metal
+  runtime needed by generated applications.
+- Assets and a versioned manifest are stored under `Contents/Resources`; the
+  manifest records the source hash, ABI versions, profile, capabilities, and
+  exact linked dependency revisions.
+- Runtime state uses a fixed-width versioned envelope and atomic writes in the
+  bundle identifier's Application Support directory.
+- Export validation has proven an ad-hoc signed bundle can be relocated under
+  `/private/tmp`, contains no checkout/build paths, links no dynamic third-party
+  libraries, and launches with an isolated writable data directory.

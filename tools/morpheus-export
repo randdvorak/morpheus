@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+output_path=${1:-"$source_root/build/exports/MorpheusFrozen.app"}
+source_path=${2:-"$source_root/generated/app.c"}
+app_name=${MORPHEUS_EXPORT_NAME:-"Morpheus App"}
+bundle_id=${MORPHEUS_EXPORT_BUNDLE_ID:-"dev.morpheus.exported"}
+app_version=${MORPHEUS_EXPORT_VERSION:-"1.0.0"}
+export_build="$source_root/build/frozen-export"
+
+if [ ! -f "$source_path" ]; then
+    echo "Accepted source does not exist: $source_path" >&2
+    exit 2
+fi
+if [ -e "$output_path" ]; then
+    echo "Refusing to overwrite existing export: $output_path" >&2
+    exit 3
+fi
+
+cmake -S "$source_root" -B "$export_build" \
+    -DBUILD_TESTING=OFF \
+    -DMORPHEUS_FROZEN_SOURCE="$source_path" \
+    -DMORPHEUS_EXPORT_APP_NAME="$app_name" \
+    -DMORPHEUS_EXPORT_BUNDLE_ID="$bundle_id" \
+    -DMORPHEUS_EXPORT_APP_VERSION="$app_version"
+cmake --build "$export_build" --target morpheus_frozen --parallel
+
+mkdir -p "$(dirname -- "$output_path")"
+/usr/bin/ditto "$export_build/MorpheusFrozen.app" "$output_path"
+/usr/bin/codesign --force --deep --sign - --options runtime "$output_path"
+/usr/bin/codesign --verify --deep --strict "$output_path"
+
+echo "$output_path"
