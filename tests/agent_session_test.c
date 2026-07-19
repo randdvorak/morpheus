@@ -136,6 +136,7 @@ int main(void)
         !file_contains(session.response_path, "candidate updated") ||
         !file_contains(session.prompt_path, "Add a visible label") ||
         !file_contains(session.prompt_path, "app_api.h and sdk.h") ||
+        !file_contains(session.prompt_path, "morph_image_load_rgba") ||
         !file_contains(session.prompt_path, "first diagnostic")) {
         fprintf(stderr, "external provider did not produce expected artifacts\n");
         cleanup(&session, root);

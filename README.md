@@ -229,10 +229,12 @@ generated source: those values can be stored in project history and may be
 compiled into exports. Secret storage and export-time credential scanning are
 not complete.
 
-HTTP and image services are asynchronous and bounded. The current HTTP facade
-limits response bodies to 1 MiB. Image inputs are limited to 1 MiB encoded,
-4096 pixels per dimension, 16 megapixels decoded, and 64 live image jobs per
-host.
+HTTP and image services are bounded. The current HTTP facade limits response
+bodies to 1 MiB. Images may be loaded from encoded memory, asynchronously from
+URLs, or synchronously from tightly packed generated RGBA8 pixels. Inputs are
+limited to 1 MiB encoded, 4096 pixels per dimension, 16 megapixels decoded, and
+64 live image jobs per host. Procedural applications should cache one uploaded
+image instead of rebuilding large grids of Nuklear primitives every frame.
 
 ## Dependencies and licensing
 

@@ -15,8 +15,12 @@
 #define NK_INCLUDE_FONT_BAKING
 #define NK_INCLUDE_DEFAULT_FONT
 #define NK_INCLUDE_COMMAND_USERDATA
+#define NK_UINT_DRAW_INDEX
 #define NK_IMPLEMENTATION
 #include "nuklear.h"
+
+_Static_assert(sizeof(nk_draw_index) == 4,
+    "Morpheus requires 32-bit Nuklear draw indices");
 
 #define NK_METAL_IMPLEMENTATION
 #include "nuklear_metal.h"

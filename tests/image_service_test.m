@@ -78,8 +78,13 @@ int main(void)
     morph_image_service *images;
     morph_image_result result;
     morph_image_id memory_image;
+    morph_image_id rgba_image;
     morph_image_id url_image;
     morph_image_id invalid_image;
+    morph_image_id invalid_rgba_image;
+    static const unsigned char rgba_pixels[] = {
+        255, 0, 0, 255, 0, 255, 0, 255
+    };
     image_server server;
     char url[128];
     unsigned int attempt;
@@ -92,6 +97,14 @@ int main(void)
     memory_image = morph_image_load_memory(images, png_1x1_rgba, sizeof(png_1x1_rgba));
     if (!memory_image || !morph_image_poll(images, memory_image, &result) ||
         result.status != MORPH_IMAGE_READY || result.width != 1 || result.height != 1) return 2;
+
+    rgba_image = morph_image_load_rgba(images, rgba_pixels, 2, 1);
+    if (!rgba_image || !morph_image_poll(images, rgba_image, &result) ||
+        result.status != MORPH_IMAGE_READY || result.width != 2 || result.height != 1) return 8;
+
+    invalid_rgba_image = morph_image_load_rgba(images, NULL, 1, 1);
+    if (!invalid_rgba_image || !morph_image_poll(images, invalid_rgba_image, &result) ||
+        result.status != MORPH_IMAGE_FAILED || !result.error || !*result.error) return 9;
 
     invalid_image = morph_image_load_memory(images, "bad", 3);
     if (!invalid_image || !morph_image_poll(images, invalid_image, &result) ||
@@ -111,6 +124,8 @@ int main(void)
     if (result.status != MORPH_IMAGE_READY || result.width != 1 || result.height != 1) return 6;
 
     morph_image_release(images, memory_image);
+    morph_image_release(images, rgba_image);
+    morph_image_release(images, invalid_rgba_image);
     morph_image_release(images, invalid_image);
     morph_image_release(images, url_image);
     if (morph_image_poll(images, url_image, &result)) return 7;

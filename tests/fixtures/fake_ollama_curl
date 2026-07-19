@@ -27,6 +27,8 @@ case "$url" in
                  (.messages[0].content | contains("ui_label")) and
                  (.messages[0].content | contains("morph_json_parse")) and
                  (.messages[0].content | contains("morph_image_load_url")) and
+                 (.messages[0].content | contains("morph_image_load_rgba")) and
+                 (.messages[0].content | contains("large per-frame primitive grids")) and
                  (.messages[0].content | contains("snprintf, vsnprintf")) and
                  (.messages[0].content | contains("versioned, pointer-free format")) and
                  (.messages[1].content | contains("Current candidate.c"))' \

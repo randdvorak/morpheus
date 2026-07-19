@@ -61,12 +61,22 @@ Hard requirements:
   freeing the document. Mutable values belong to one builder and may be attached
   only once. Free serialized morph_json_buffer data with morph_json_buffer_free.
 - host->images is an optional host-owned image service. Use morph_image_load_url
-  or morph_image_load_memory, poll outside render_ui with morph_image_poll, draw
-  a ready image into the current Nuklear layout cell with morph_image_draw, and
+  or morph_image_load_memory for encoded images. Use morph_image_load_rgba for
+  tightly packed generated RGBA8 pixels; it copies the pixels into a ready GPU
+  texture before returning. Poll outside render_ui with morph_image_poll, draw a
+  ready image into the current Nuklear layout cell with morph_image_draw, and
   release every image ID with morph_image_release. Do not assume host->images is
   non-null or retain platform texture handles. Image URLs are asynchronous.
 - Image inputs are limited to 1 MiB encoded, 4096 pixels per dimension, 16
   megapixels decoded, and 64 live image jobs. Treat a zero image ID as failure.
+- Keep every frame responsive. Do not build large per-frame primitive grids or
+  repeat expensive image, simulation, or mathematical work in render_ui. For a
+  generated raster, allocate a bounded RGBA8 pixel buffer, compute it in update
+  only when inputs or dimensions change, upload it once with
+  morph_image_load_rgba, and draw the cached image thereafter. Release the old
+  image before replacing it. If recomputation can exceed one frame, process a
+  bounded number of rows or work items per update while retaining the previous
+  image. Keep ordinary canvas primitive counts modest.
 - Do not call SDL, operating-system APIs, undeclared functions, or invent host
   capabilities outside Morpheus, the approved C runtime subset, and public
   Nuklear.

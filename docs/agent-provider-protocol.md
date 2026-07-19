@@ -90,6 +90,20 @@ released with `morph_json_buffer_free`. Generated modules must not retain parsed
 values after freeing their document or mutable values after freeing their
 builder.
 
+Generated or decoded images use the opaque `morph_image_*` facade. Encoded
+bytes and URLs remain available through `morph_image_load_memory` and
+`morph_image_load_url`. Procedural raster applications should keep a bounded,
+tightly packed RGBA8 buffer, recompute it outside `render_ui` only when its
+inputs change, and upload it with `morph_image_load_rgba`. The returned image is
+immediately ready and can replace tens of thousands of per-frame Nuklear canvas
+commands with one cached image draw. Expensive recomputation should be divided
+into bounded row or work-item batches across updates while the previous image
+remains visible. Every image ID must be released.
+
+Providers should keep each frame bounded and responsive. In particular, they
+must avoid large per-frame primitive grids and repeated image, simulation, or
+mathematical computation in `render_ui`.
+
 ## Ollama provider
 
 `tools/morpheus-ollama-agent` connects to Ollama's native API at

@@ -14,6 +14,8 @@
 #define NK_INCLUDE_FONT_BAKING
 #define NK_INCLUDE_DEFAULT_FONT
 #define NK_INCLUDE_COMMAND_USERDATA
+/* Generated apps may emit more than 65,535 vertices in a single frame. */
+#define NK_UINT_DRAW_INDEX
 /* main.m owns the one NK_IMPLEMENTATION translation unit. */
 #ifndef NK_NUKLEAR_H_
 #include "nuklear.h"

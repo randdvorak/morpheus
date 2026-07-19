@@ -1,5 +1,8 @@
 #include "morpheus/app_api.h"
 
+typedef char morph_require_32_bit_nuklear_indices[
+    sizeof(nk_draw_index) == 4 ? 1 : -1];
+
 static int create(morph_host *host, void **state)
 {
     (void)host;

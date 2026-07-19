@@ -13,6 +13,7 @@ printf '%s\n' \
 printf '%s\n' \
     'void *morph_json_parse(const char *, unsigned long, void *);' \
     'unsigned long morph_image_load_url(void *, const char *);' \
+    'unsigned long morph_image_load_rgba(void *, const void *, unsigned int, unsigned int);' \
     > "$workspace/sdk.h"
 : > "$workspace/model.txt"
 printf '%s\n' 'Replace the candidate for this test.' > "$workspace/prompt.txt"

@@ -136,7 +136,12 @@ static int morph_agent_write_prompt(
         "Modify candidate.c to satisfy the user request below.\n"
         "Only edit candidate.c. Read app_api.h and sdk.h for the complete contract.\n"
         "Keep the implementation freestanding C accepted by TinyCC with "
-        "-nostdlib -Wall -Werror.\n\nUser request:\n";
+        "-nostdlib -Wall -Werror.\n"
+        "Keep frames responsive: do not create large per-frame primitive grids "
+        "or repeat expensive generated-raster work in render_ui. Cache bounded "
+        "RGBA8 pixels with morph_image_load_rgba and redraw the resulting image; "
+        "recompute only when inputs or dimensions change, splitting expensive "
+        "work across bounded update steps.\n\nUser request:\n";
 
     if (!prompt) return morph_agent_error(error, error_capacity, strerror(errno));
     request = fopen(session->request_path, "rb");

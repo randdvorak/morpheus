@@ -13,8 +13,12 @@
 #define NK_INCLUDE_FONT_BAKING
 #define NK_INCLUDE_DEFAULT_FONT
 #define NK_INCLUDE_COMMAND_USERDATA
+#define NK_UINT_DRAW_INDEX
 #define NK_IMPLEMENTATION
 #include "nuklear.h"
+
+_Static_assert(sizeof(nk_draw_index) == 4,
+    "Morpheus requires 32-bit Nuklear draw indices");
 
 #define NK_METAL_IMPLEMENTATION
 #include "nuklear_metal.h"
@@ -723,8 +727,11 @@ int main(int argc, char **argv)
         }
         nk_end(&ctx);
 
-        if (morph_runtime_module_render_mode(&module) ==
-            MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
+        if (agent_accept_requested || agent_reject_requested) {
+            /* Keep preview decisions responsive even when generated rendering
+               is expensive. The host controls are still drawn and cleared. */
+        } else if (morph_runtime_module_render_mode(&module) ==
+                MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
             morph_runtime_module_render_ui(&module, &host);
         } else {
             if (nk_begin(&ctx,

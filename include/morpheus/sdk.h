@@ -54,6 +54,12 @@ morph_image_id morph_image_load_memory(
     morph_image_service *service,
     const void *data,
     unsigned long size);
+/* Tightly packed RGBA8 pixels are copied into a ready texture before return. */
+morph_image_id morph_image_load_rgba(
+    morph_image_service *service,
+    const void *pixels,
+    unsigned int width,
+    unsigned int height);
 /* URL loading is asynchronous and uses the host's bounded HTTP service. */
 morph_image_id morph_image_load_url(
     morph_image_service *service,

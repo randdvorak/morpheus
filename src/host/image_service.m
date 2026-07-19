@@ -61,15 +61,53 @@ static void morph_image_fail(morph_image_job *job, const char *message)
     snprintf(job->error, sizeof(job->error), "%s", message ? message : "Image load failed");
 }
 
+static int morph_image_upload_rgba(
+    morph_image_service *service,
+    morph_image_job *job,
+    const void *pixels,
+    unsigned int width,
+    unsigned int height)
+{
+    id<MTLDevice> device;
+    id<MTLTexture> texture;
+    MTLTextureDescriptor *descriptor;
+
+    if (!pixels || !width || !height ||
+        width > MORPHEUS_IMAGE_MAX_DIMENSION ||
+        height > MORPHEUS_IMAGE_MAX_DIMENSION ||
+        (unsigned long)width * (unsigned long)height > MORPHEUS_IMAGE_MAX_PIXELS) {
+        morph_image_fail(job, "RGBA image is empty or exceeds dimension limits");
+        return 0;
+    }
+    device = (__bridge id<MTLDevice>)service->retained_device;
+    descriptor = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+        width:(NSUInteger)width
+        height:(NSUInteger)height
+        mipmapped:NO];
+    descriptor.usage = MTLTextureUsageShaderRead;
+    texture = [device newTextureWithDescriptor:descriptor];
+    if (!texture) {
+        morph_image_fail(job, "Unable to create the GPU texture");
+        return 0;
+    }
+    [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+        mipmapLevel:0
+        withBytes:pixels
+        bytesPerRow:(NSUInteger)width * 4u];
+    job->retained_texture = (__bridge_retained void *)texture;
+    job->width = width;
+    job->height = height;
+    job->status = MORPH_IMAGE_READY;
+    return 1;
+}
+
 static int morph_image_decode(
     morph_image_service *service,
     morph_image_job *job,
     const void *data,
     unsigned long size)
 {
-    id<MTLDevice> device;
-    id<MTLTexture> texture;
-    MTLTextureDescriptor *descriptor;
     unsigned char *pixels;
     int width;
     int height;
@@ -93,29 +131,12 @@ static int morph_image_decode(
         return 0;
     }
 
-    device = (__bridge id<MTLDevice>)service->retained_device;
-    descriptor = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-        width:(NSUInteger)width
-        height:(NSUInteger)height
-        mipmapped:NO];
-    descriptor.usage = MTLTextureUsageShaderRead;
-    texture = [device newTextureWithDescriptor:descriptor];
-    if (texture) {
-        [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
-            mipmapLevel:0
-            withBytes:pixels
-            bytesPerRow:(NSUInteger)width * 4u];
-    }
-    stbi_image_free(pixels);
-    if (!texture) {
-        morph_image_fail(job, "Unable to create the GPU texture");
+    if (!morph_image_upload_rgba(
+            service, job, pixels, (unsigned int)width, (unsigned int)height)) {
+        stbi_image_free(pixels);
         return 0;
     }
-    job->retained_texture = (__bridge_retained void *)texture;
-    job->width = (unsigned int)width;
-    job->height = (unsigned int)height;
-    job->status = MORPH_IMAGE_READY;
+    stbi_image_free(pixels);
     return 1;
 }
 
@@ -143,6 +164,18 @@ morph_image_id morph_image_load_memory(
     morph_image_job *job = morph_image_allocate(service);
     if (!job) return 0;
     (void)morph_image_decode(service, job, data, size);
+    return job->id;
+}
+
+morph_image_id morph_image_load_rgba(
+    morph_image_service *service,
+    const void *pixels,
+    unsigned int width,
+    unsigned int height)
+{
+    morph_image_job *job = morph_image_allocate(service);
+    if (!job) return 0;
+    (void)morph_image_upload_rgba(service, job, pixels, width, height);
     return job->id;
 }
 

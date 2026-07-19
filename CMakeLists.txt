@@ -421,6 +421,20 @@ add_custom_target(morpheus_hardened
 )
 
 if(BUILD_TESTING)
+    add_executable(morpheus_nuklear_large_draw_test
+        tests/nuklear_large_draw_test.c
+    )
+    target_include_directories(morpheus_nuklear_large_draw_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+    )
+    target_compile_options(morpheus_nuklear_large_draw_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wno-c23-extensions
+    )
+    add_test(NAME nuklear_large_draw COMMAND morpheus_nuklear_large_draw_test)
+
     add_executable(morpheus_runtime_reload_test
         tests/runtime_reload_test.c
         src/compiler/runtime_module.c
