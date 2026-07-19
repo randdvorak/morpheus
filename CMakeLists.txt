@@ -58,11 +58,69 @@ include(ExternalProject)
 find_program(MORPHEUS_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
 find_program(MORPHEUS_PATCH_EXECUTABLE NAMES patch REQUIRED)
 find_program(MORPHEUS_CODESIGN_EXECUTABLE NAMES codesign REQUIRED)
+find_program(MORPHEUS_XCRUN_EXECUTABLE NAMES xcrun REQUIRED)
+execute_process(
+    COMMAND "${MORPHEUS_XCRUN_EXECUTABLE}" --find actool
+    RESULT_VARIABLE MORPHEUS_ACTOOL_RESULT
+    OUTPUT_VARIABLE MORPHEUS_ACTOOL_EXECUTABLE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT MORPHEUS_ACTOOL_RESULT EQUAL 0 OR
+   NOT EXISTS "${MORPHEUS_ACTOOL_EXECUTABLE}")
+    message(FATAL_ERROR
+        "A full Xcode installation with actool is required to build the Morpheus icon")
+endif()
 set(
     MORPHEUS_AGENT_PROVIDER
     "${CMAKE_SOURCE_DIR}/tools/morpheus-codex-agent"
     CACHE FILEPATH
     "Executable implementing the Morpheus external coding-agent protocol"
+)
+
+set(MORPHEUS_ICON_SOURCE "${CMAKE_SOURCE_DIR}/docs/icons/morpheus.icon")
+set(MORPHEUS_ICON_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated/morpheus-icon")
+set(MORPHEUS_ICON_ASSET_CATALOG "${MORPHEUS_ICON_OUTPUT_DIR}/Assets.car")
+set(MORPHEUS_ICON_ICNS "${MORPHEUS_ICON_OUTPUT_DIR}/morpheus.icns")
+set(MORPHEUS_ICON_PARTIAL_PLIST "${MORPHEUS_ICON_OUTPUT_DIR}/partial.plist")
+file(GLOB_RECURSE MORPHEUS_ICON_INPUTS CONFIGURE_DEPENDS
+    "${MORPHEUS_ICON_SOURCE}/*")
+if(NOT EXISTS "${MORPHEUS_ICON_SOURCE}/icon.json" OR
+   NOT MORPHEUS_ICON_INPUTS)
+    message(FATAL_ERROR "Morpheus Icon Composer source is incomplete: ${MORPHEUS_ICON_SOURCE}")
+endif()
+add_custom_command(
+    OUTPUT
+        "${MORPHEUS_ICON_ASSET_CATALOG}"
+        "${MORPHEUS_ICON_ICNS}"
+        "${MORPHEUS_ICON_PARTIAL_PLIST}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${MORPHEUS_ICON_OUTPUT_DIR}"
+    COMMAND "${MORPHEUS_ACTOOL_EXECUTABLE}"
+        "${MORPHEUS_ICON_SOURCE}"
+        --compile "${MORPHEUS_ICON_OUTPUT_DIR}"
+        --platform macosx
+        --minimum-deployment-target 14.0
+        --target-device mac
+        --app-icon morpheus
+        --output-partial-info-plist "${MORPHEUS_ICON_PARTIAL_PLIST}"
+        --output-format human-readable-text
+        --notices
+        --warnings
+    DEPENDS ${MORPHEUS_ICON_INPUTS}
+    COMMENT "Compiling the Morpheus Icon Composer asset"
+    VERBATIM
+)
+add_custom_target(morpheus_app_icon DEPENDS
+    "${MORPHEUS_ICON_ASSET_CATALOG}"
+    "${MORPHEUS_ICON_ICNS}"
+    "${MORPHEUS_ICON_PARTIAL_PLIST}"
+)
+set_source_files_properties(
+    "${MORPHEUS_ICON_ASSET_CATALOG}"
+    "${MORPHEUS_ICON_ICNS}"
+    PROPERTIES
+        GENERATED TRUE
+        MACOSX_PACKAGE_LOCATION Resources
 )
 
 set(SDL_SHARED OFF CACHE BOOL "Build SDL as a shared library" FORCE)
@@ -278,8 +336,10 @@ add_executable(morpheus MACOSX_BUNDLE
     src/compiler/runtime_module.c
     src/project/revision_store.c
     src/project/project_store.c
+    "${MORPHEUS_ICON_ASSET_CATALOG}"
+    "${MORPHEUS_ICON_ICNS}"
 )
-add_dependencies(morpheus morpheus_tinycc)
+add_dependencies(morpheus morpheus_tinycc morpheus_app_icon)
 
 target_include_directories(morpheus PRIVATE
     "${CMAKE_BINARY_DIR}/generated"
@@ -329,6 +389,7 @@ set_target_properties(morpheus PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "Morpheus"
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.morpheus.seed"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/MorpheusInfo.plist.in"
+    MACOSX_BUNDLE_ICON_FILE "morpheus"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
 )

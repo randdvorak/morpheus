@@ -113,8 +113,11 @@ the active project in `projects/.active-project`.
 
 ## Build and run
 
-The current build requires macOS, Xcode Command Line Tools/Clang, CMake 3.24 or
-newer, Git, Make, and `patch`. Apple Silicon is the actively developed target.
+The current build requires macOS, full Xcode 26 or newer (including Clang and
+`actool`), CMake 3.24 or newer, Git, Make, and `patch`. Apple Silicon is the
+actively developed target. The build compiles the layered Icon Composer source
+at `docs/icons/morpheus.icon` into modern and backward-compatible bundle
+resources.
 
 Initialize the pinned dependencies after cloning:
 
