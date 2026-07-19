@@ -550,6 +550,44 @@ int morph_agent_session_create_patch(
     return 1;
 }
 
+int morph_agent_session_candidate_changed(
+    const morph_agent_session *session,
+    char *error,
+    unsigned long error_capacity)
+{
+    FILE *before = fopen(session->source_before_path, "rb");
+    FILE *candidate;
+    unsigned char before_buffer[16384];
+    unsigned char candidate_buffer[16384];
+    size_t before_count;
+    size_t candidate_count;
+
+    if (!before) return morph_agent_error(error, error_capacity, strerror(errno));
+    candidate = fopen(session->candidate_path, "rb");
+    if (!candidate) {
+        fclose(before);
+        return morph_agent_error(error, error_capacity, strerror(errno));
+    }
+    do {
+        before_count = fread(before_buffer, 1, sizeof(before_buffer), before);
+        candidate_count = fread(candidate_buffer, 1, sizeof(candidate_buffer), candidate);
+        if (ferror(before) || ferror(candidate)) {
+            fclose(before);
+            fclose(candidate);
+            return morph_agent_error(error, error_capacity, "Unable to compare agent candidate");
+        }
+        if (before_count != candidate_count ||
+            (before_count && memcmp(before_buffer, candidate_buffer, before_count) != 0)) {
+            fclose(before);
+            fclose(candidate);
+            return 1;
+        }
+    } while (before_count != 0);
+    fclose(before);
+    fclose(candidate);
+    return morph_agent_error(error, error_capacity, "Agent returned without changing candidate.c");
+}
+
 int morph_agent_session_accept_source(
     const morph_agent_session *session,
     const char *destination_path,

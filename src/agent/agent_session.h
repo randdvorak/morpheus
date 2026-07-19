@@ -73,6 +73,10 @@ int morph_agent_session_create_patch(
     const morph_agent_session *session,
     char *error,
     unsigned long error_capacity);
+int morph_agent_session_candidate_changed(
+    const morph_agent_session *session,
+    char *error,
+    unsigned long error_capacity);
 int morph_agent_session_accept_source(
     const morph_agent_session *session,
     const char *destination_path,

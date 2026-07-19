@@ -1111,7 +1111,11 @@ int main(int argc, char **argv)
             } else if (agent_finished) {
                 int candidate_succeeded = 0;
                 if (agent_session.status == MORPH_AGENT_PROVIDER_SUCCEEDED) {
-                    candidate_succeeded = morph_runtime_module_compile_candidate(
+                    candidate_succeeded = morph_agent_session_candidate_changed(
+                            &agent_session,
+                            module_error,
+                            sizeof(module_error)) &&
+                        morph_runtime_module_compile_candidate(
                             &module,
                             agent_session.candidate_path,
                             module_error,

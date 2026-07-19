@@ -135,6 +135,23 @@ int main(void)
         return 4;
     }
 
+    if (!morph_agent_session_candidate_changed(&session, error, sizeof(error))) {
+        fprintf(stderr, "changed candidate was reported as unchanged: %s\n", error);
+        cleanup(&session, root);
+        return 5;
+    }
+    if (!write_file(session.candidate_path, "int original;\n") ||
+        morph_agent_session_candidate_changed(&session, error, sizeof(error)) ||
+        !strstr(error, "without changing candidate.c") ||
+        !write_file(
+            session.candidate_path,
+            "int original;\n\n/* fake external agent edit */\n")) {
+        fprintf(stderr, "unchanged candidate was not rejected\n");
+        cleanup(&session, root);
+        return 6;
+    }
+    error[0] = '\0';
+
     if (!morph_agent_session_record_build(
             &session,
             1,
@@ -156,14 +173,14 @@ int main(void)
             sizeof(error))) {
         fprintf(stderr, "artifact recording failed: %s\n", error);
         cleanup(&session, root);
-        return 5;
+        return 7;
     }
     snprintf(artifact_path, sizeof(artifact_path), "%s/patch.diff", session.run_directory);
     if (!file_contains(artifact_path, "fake external agent edit") ||
         !file_contains(accepted_path, "fake external agent edit")) {
         fprintf(stderr, "patch or accepted source was not recorded\n");
         cleanup(&session, root);
-        return 6;
+        return 8;
     }
     if (!morph_agent_session_restore_source(
             &session,
@@ -173,13 +190,13 @@ int main(void)
         !file_contains(accepted_path, "int original;")) {
         fprintf(stderr, "source rollback was not recorded\n");
         cleanup(&session, root);
-        return 7;
+        return 9;
     }
     snprintf(artifact_path, sizeof(artifact_path), "%s/outcome.json", session.run_directory);
     if (!file_contains(artifact_path, "\"revision\": 7")) {
         fprintf(stderr, "accepted outcome was not recorded\n");
         cleanup(&session, root);
-        return 8;
+        return 10;
     }
 
     cleanup(&session, root);
