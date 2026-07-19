@@ -16,6 +16,8 @@ Nuklear, Metal, Objective-C, and C. The architecture is intended to support
 other platforms and Nuklear rendering backends later, but those ports do not
 exist yet.
 
+![Morpheus host running a generated FX rate dashboard](docs/images/morpheus-app.png)
+
 ## What works today
 
 - Native SDL3/Metal host with a Nuklear immediate-mode interface
