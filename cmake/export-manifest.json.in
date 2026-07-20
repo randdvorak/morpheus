@@ -1,7 +1,7 @@
 {
   "format_version": 1,
-  "host_abi": 3,
-  "app_abi": 3,
+  "host_abi": @MORPHEUS_HOST_ABI_VERSION_VALUE@,
+  "app_abi": @MORPHEUS_APP_ABI_VERSION_VALUE@,
   "application_name": "@MORPHEUS_EXPORT_APP_NAME@",
   "bundle_identifier": "@MORPHEUS_EXPORT_BUNDLE_ID@",
   "application_version": "@MORPHEUS_EXPORT_APP_VERSION@",

@@ -6,6 +6,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "authoring_capabilities.h"
 #include "agent_session.h"
 
 static int write_file(const char *path, const char *text)
@@ -78,6 +79,12 @@ int main(void)
     char artifact_path[MORPH_AGENT_PATH_CAPACITY];
     char error[1024] = {0};
     morph_agent_session session;
+    morph_capability agent_capability;
+    morph_capability_registry registry;
+    morph_host authoring_host = {0};
+    const morph_capability *provider;
+    const morph_authoring_agent_api *agent;
+    void *agent_context;
     struct timespec delay = {0, 1000000};
     int finished = 0;
     int polls = 0;
@@ -86,7 +93,23 @@ int main(void)
         perror("mkdtemp");
         return 1;
     }
-    morph_agent_session_reset(&session);
+    agent_capability = morph_authoring_agent_capability(&session);
+    registry.entries = &agent_capability;
+    registry.count = 1;
+    authoring_host.abi_version = MORPHEUS_HOST_ABI_VERSION;
+    authoring_host.capabilities = &registry;
+    provider = morph_host_find_capability(
+        &authoring_host,
+        MORPHEUS_AUTHORING_AGENT_CAPABILITY,
+        MORPHEUS_AUTHORING_AGENT_ABI_VERSION);
+    agent = morph_authoring_agent_from_capability(provider);
+    agent_context = provider ? provider->context : NULL;
+    if (!agent) {
+        fprintf(stderr, "agent capability discovery failed\n");
+        rmdir(root);
+        return 11;
+    }
+    agent->reset(agent_context);
     snprintf(source_path, sizeof(source_path), "%s/source.c", root);
     snprintf(api_path, sizeof(api_path), "%s/api.h", root);
     snprintf(sdk_path, sizeof(sdk_path), "%s/sdk.h", root);
@@ -94,27 +117,27 @@ int main(void)
     if (!write_file(source_path, "int original;\n") ||
         !write_file(api_path, "/* api */\n") ||
         !write_file(sdk_path, "/* sdk */\n") ||
-        !morph_agent_session_init(
-            &session,
+        !agent->init(
+            agent_context,
             root,
             MORPHEUS_FAKE_AGENT_PATH,
             error,
             sizeof(error)) ||
-        !morph_agent_session_set_model(
-            &session,
+        !agent->set_model(
+            agent_context,
             "test-model",
             error,
             sizeof(error)) ||
-        !morph_agent_session_begin(
-            &session,
+        !agent->begin(
+            agent_context,
             "Add a visible label",
             source_path,
             api_path,
             sdk_path,
             error,
             sizeof(error)) ||
-        !morph_agent_session_start_attempt(
-            &session,
+        !agent->start_attempt(
+            agent_context,
             "first diagnostic",
             error,
             sizeof(error))) {
@@ -124,15 +147,17 @@ int main(void)
     }
 
     while (!finished && polls++ < 500) {
-        if (!morph_agent_session_poll(&session, &finished, error, sizeof(error))) {
+        if (!agent->poll(
+                agent_context, &finished, error, sizeof(error))) {
             fprintf(stderr, "agent poll failed: %s\n", error);
             cleanup(&session, root);
             return 3;
         }
         if (!finished) nanosleep(&delay, NULL);
     }
-    if (!finished || session.status != MORPH_AGENT_PROVIDER_SUCCEEDED ||
-        !file_contains(session.candidate_path, "fake external agent edit") ||
+    if (!finished || agent->status(agent_context) !=
+            MORPHEUS_AUTHORING_AGENT_PROVIDER_SUCCEEDED ||
+        !file_contains(agent->candidate_path(agent_context), "fake external agent edit") ||
         !file_contains(session.response_path, "candidate updated") ||
         !file_contains(session.prompt_path, "Add a visible label") ||
         !file_contains(session.prompt_path, "app_api.h and sdk.h") ||
@@ -143,16 +168,16 @@ int main(void)
         return 4;
     }
 
-    if (!morph_agent_session_candidate_changed(&session, error, sizeof(error))) {
+    if (!agent->candidate_changed(agent_context, error, sizeof(error))) {
         fprintf(stderr, "changed candidate was reported as unchanged: %s\n", error);
         cleanup(&session, root);
         return 5;
     }
-    if (!write_file(session.candidate_path, "int original;\n") ||
-        morph_agent_session_candidate_changed(&session, error, sizeof(error)) ||
+    if (!write_file(agent->candidate_path(agent_context), "int original;\n") ||
+        agent->candidate_changed(agent_context, error, sizeof(error)) ||
         !strstr(error, "without changing candidate.c") ||
         !write_file(
-            session.candidate_path,
+            agent->candidate_path(agent_context),
             "int original;\n\n/* fake external agent edit */\n")) {
         fprintf(stderr, "unchanged candidate was not rejected\n");
         cleanup(&session, root);
@@ -160,21 +185,21 @@ int main(void)
     }
     error[0] = '\0';
 
-    if (!morph_agent_session_record_build(
-            &session,
+    if (!agent->record_build(
+            agent_context,
             1,
             "active",
             "build passed",
             error,
             sizeof(error)) ||
-        !morph_agent_session_create_patch(&session, error, sizeof(error)) ||
-        !morph_agent_session_accept_source(
-            &session,
+        !agent->create_patch(agent_context, error, sizeof(error)) ||
+        !agent->accept_source(
+            agent_context,
             accepted_path,
             error,
             sizeof(error)) ||
-        !morph_agent_session_record_outcome(
-            &session,
+        !agent->record_outcome(
+            agent_context,
             "accepted",
             7,
             error,
@@ -190,8 +215,8 @@ int main(void)
         cleanup(&session, root);
         return 8;
     }
-    if (!morph_agent_session_restore_source(
-            &session,
+    if (!agent->restore_source(
+            agent_context,
             accepted_path,
             error,
             sizeof(error)) ||

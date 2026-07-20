@@ -19,6 +19,18 @@ set(MORPHEUS_EXPORT_APP_VERSION "1.0.0"
     CACHE STRING "Version for the frozen application")
 set(MORPHEUS_EXPORT_ASSETS "${CMAKE_SOURCE_DIR}/generated/assets"
     CACHE PATH "Asset directory copied into the frozen application")
+
+# Keep export metadata synchronized with the public ABI header.
+file(STRINGS "${CMAKE_SOURCE_DIR}/include/morpheus/app_api.h"
+    MORPHEUS_HOST_ABI_LINE
+    REGEX "^#define MORPHEUS_HOST_ABI_VERSION [0-9]+u$")
+file(STRINGS "${CMAKE_SOURCE_DIR}/include/morpheus/app_api.h"
+    MORPHEUS_APP_ABI_LINE
+    REGEX "^#define MORPHEUS_APP_ABI_VERSION [0-9]+u$")
+string(REGEX REPLACE ".* ([0-9]+)u$" "\\1"
+    MORPHEUS_HOST_ABI_VERSION_VALUE "${MORPHEUS_HOST_ABI_LINE}")
+string(REGEX REPLACE ".* ([0-9]+)u$" "\\1"
+    MORPHEUS_APP_ABI_VERSION_VALUE "${MORPHEUS_APP_ABI_LINE}")
 if(MORPHEUS_EXPORT_APP_NAME MATCHES "[\"\\\\\r\n]" OR
    NOT MORPHEUS_EXPORT_BUNDLE_ID MATCHES "^[A-Za-z0-9.-]+$" OR
    NOT MORPHEUS_EXPORT_APP_VERSION MATCHES "^[A-Za-z0-9.-]+$")
@@ -191,23 +203,38 @@ else()
 endif()
 set(MORPHEUS_SQLITE_SOURCE_DIR "${MORPHEUS_SQLITE_STAGE_ROOT}/src")
 set(MORPHEUS_SQLITE_BUILD_DIR "${MORPHEUS_SQLITE_STAGE_ROOT}/build")
+set(MORPHEUS_SQLITE_STAMP_DIR "${MORPHEUS_SQLITE_STAGE_ROOT}/stamp")
 set(MORPHEUS_SQLITE_LIBRARY "${MORPHEUS_SQLITE_BUILD_DIR}/libsqlite3.a")
 file(MAKE_DIRECTORY "${MORPHEUS_SQLITE_BUILD_DIR}")
 
 ExternalProject_Add(morpheus_sqlite_external
     SOURCE_DIR "${MORPHEUS_SQLITE_SOURCE_DIR}"
     BINARY_DIR "${MORPHEUS_SQLITE_BUILD_DIR}"
+    # Keep stamps with the temporary artifacts. If macOS purges the stage,
+    # CMake must repeat download and configure rather than trust stale stamps
+    # retained in the repository build directory.
+    STAMP_DIR "${MORPHEUS_SQLITE_STAMP_DIR}"
     DOWNLOAD_COMMAND
         "${CMAKE_COMMAND}" -E copy_directory
         "${CMAKE_SOURCE_DIR}/third_party/sqlite"
         "${MORPHEUS_SQLITE_SOURCE_DIR}"
     UPDATE_COMMAND ""
     CONFIGURE_COMMAND
-        "${CMAKE_COMMAND}" -E env "CC=${CMAKE_C_COMPILER}"
+        # The system Tcl shipped by macOS cannot spawn child commands in some
+        # managed environments. Build SQLite's bundled bootstrap Jim Tcl and
+        # force autosetup to use it instead.
+        "${CMAKE_C_COMPILER}" -O2
+        -o "${MORPHEUS_SQLITE_BUILD_DIR}/jimsh0"
+        "${MORPHEUS_SQLITE_SOURCE_DIR}/autosetup/jimsh0.c"
+    COMMAND
+        "${CMAKE_COMMAND}" -E env
+        "CC=${CMAKE_C_COMPILER}"
+        "autosetup_tclsh=${MORPHEUS_SQLITE_BUILD_DIR}/jimsh0"
         "${MORPHEUS_SQLITE_SOURCE_DIR}/configure"
         --disable-shared
         --disable-readline
         --disable-load-extension
+        --disable-tcl
     BUILD_COMMAND "${MORPHEUS_MAKE_EXECUTABLE}" libsqlite3.a
     INSTALL_COMMAND ""
     BUILD_BYPRODUCTS
@@ -252,6 +279,82 @@ target_compile_options(morpheus_stb_image PRIVATE
     -Wpedantic
 )
 
+# Runtime facilities shared by the authoring host and standalone applications.
+# Keep this target independent of TinyCC, agents, projects, revisions, and the
+# Morpheus authoring UI so frozen applications cannot acquire those components
+# transitively.
+add_library(morpheus_runtime_core STATIC
+    src/host/http_service.m
+    src/host/image_service.m
+    src/host/json_service.c
+)
+target_include_directories(morpheus_runtime_core
+    PUBLIC
+        "${CMAKE_SOURCE_DIR}/include"
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/host"
+        "${CMAKE_SOURCE_DIR}/third_party/stb"
+)
+target_compile_options(morpheus_runtime_core PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>
+    $<$<COMPILE_LANGUAGE:OBJC>:-Wno-c23-extensions>
+)
+target_link_libraries(morpheus_runtime_core PRIVATE
+    yyjson
+    morpheus_stb_image
+    "-framework Foundation"
+    "-framework Metal"
+)
+
+# The development host discovers SDK functions by name for TinyCC modules, so
+# every runtime-core object must be present even when the host has no direct C
+# reference to a particular SDK function. Frozen apps currently ship the same
+# complete capability profile. Unit tests link normally and pull only the
+# service under test.
+function(morpheus_force_link_runtime_core target)
+    target_link_libraries(${target} PRIVATE morpheus_runtime_core)
+    if(APPLE)
+        target_link_options(${target} PRIVATE
+            "-Wl,-force_load,$<TARGET_FILE:morpheus_runtime_core>"
+        )
+    endif()
+endfunction()
+
+# Standalone process shell. The generated application and tiny launcher link
+# this archive, while the Morpheus authoring shell keeps its own event loop.
+add_library(morpheus_standalone_runtime STATIC
+    src/runtime/standalone_runtime.m
+)
+target_include_directories(morpheus_standalone_runtime
+    PUBLIC
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/Nuklear/demo/metal"
+        "${CMAKE_SOURCE_DIR}/src/host"
+)
+target_compile_options(morpheus_standalone_runtime PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -ffunction-sections
+    -fdata-sections
+    -fobjc-arc
+    -Wno-c23-extensions
+    -Wno-unused-but-set-variable
+)
+target_link_libraries(morpheus_standalone_runtime PRIVATE
+    morpheus_runtime_core
+    SDL3::SDL3-static
+    "-framework Metal"
+    "-framework QuartzCore"
+    "-framework Foundation"
+)
+
 if(EXISTS "${MORPHEUS_FROZEN_SOURCE}")
 file(SHA256 "${MORPHEUS_FROZEN_SOURCE}" MORPHEUS_FROZEN_SOURCE_SHA256)
 foreach(MORPHEUS_EXPORT_DEPENDENCY SDL Nuklear third_party/yyjson third_party/stb)
@@ -273,16 +376,10 @@ configure_file(
 add_executable(morpheus_frozen MACOSX_BUNDLE EXCLUDE_FROM_ALL
     src/export/main.m
     "${MORPHEUS_FROZEN_SOURCE}"
-    src/host/http_service.m
-    src/host/image_service.m
-    src/host/json_service.c
 )
 target_include_directories(morpheus_frozen PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/Nuklear"
-    "${CMAKE_SOURCE_DIR}/Nuklear/demo/metal"
-    "${CMAKE_SOURCE_DIR}/src/host"
-    "${CMAKE_SOURCE_DIR}/third_party/stb"
 )
 target_compile_definitions(morpheus_frozen PRIVATE
     MORPHEUS_EXPORT_APP_NAME="${MORPHEUS_EXPORT_APP_NAME}"
@@ -302,13 +399,9 @@ target_link_options(morpheus_frozen PRIVATE
     "-Wl,-dead_strip"
 )
 target_link_libraries(morpheus_frozen PRIVATE
-    yyjson
-    morpheus_stb_image
-    SDL3::SDL3-static
-    "-framework Metal"
-    "-framework QuartzCore"
-    "-framework Foundation"
+    morpheus_standalone_runtime
 )
+morpheus_force_link_runtime_core(morpheus_frozen)
 set_target_properties(morpheus_frozen PROPERTIES
     OUTPUT_NAME "MorpheusFrozen"
     MACOSX_BUNDLE_BUNDLE_NAME "${MORPHEUS_EXPORT_APP_NAME}"
@@ -335,15 +428,46 @@ else()
         "Frozen export target disabled; source not found: ${MORPHEUS_FROZEN_SOURCE}")
 endif()
 
-add_executable(morpheus MACOSX_BUNDLE
-    src/host/main.m
-    src/host/http_service.m
-    src/host/image_service.m
-    src/host/json_service.c
+# Development-only implementation. This archive is deliberately absent from
+# the frozen target and will back the optional authoring capability providers
+# consumed by the self-hosted Morpheus UI.
+add_library(morpheus_authoring STATIC
+    src/authoring/authoring_capabilities.c
+    src/authoring/export_service.c
     src/agent/agent_session.c
     src/compiler/runtime_module.c
     src/project/revision_store.c
     src/project/project_store.c
+)
+add_dependencies(morpheus_authoring morpheus_tinycc)
+target_include_directories(morpheus_authoring PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/Nuklear"
+    "${CMAKE_SOURCE_DIR}/src/agent"
+    "${CMAKE_SOURCE_DIR}/src/authoring"
+    "${CMAKE_SOURCE_DIR}/src/compiler"
+    "${CMAKE_SOURCE_DIR}/src/project"
+    "${CMAKE_SOURCE_DIR}/tinycc"
+)
+target_compile_definitions(morpheus_authoring PRIVATE
+    MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+    MORPHEUS_EXPORT_TOOL_PATH="${CMAKE_SOURCE_DIR}/tools/morpheus-export"
+    MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
+    MORPHEUS_TCC_INCLUDE_PATH="${MORPHEUS_TCC_SOURCE_DIR}/include"
+)
+target_compile_options(morpheus_authoring PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+target_link_libraries(morpheus_authoring PRIVATE
+    morpheus_libtcc
+    ${CMAKE_DL_LIBS}
+)
+
+add_executable(morpheus MACOSX_BUNDLE
+    src/host/main.m
     "${MORPHEUS_ICON_ASSET_CATALOG}"
     "${MORPHEUS_ICON_ICNS}"
 )
@@ -355,6 +479,7 @@ target_include_directories(morpheus PRIVATE
     "${CMAKE_SOURCE_DIR}/Nuklear"
     "${CMAKE_SOURCE_DIR}/Nuklear/demo/metal"
     "${CMAKE_SOURCE_DIR}/src/agent"
+    "${CMAKE_SOURCE_DIR}/src/authoring"
     "${CMAKE_SOURCE_DIR}/src/compiler"
     "${CMAKE_SOURCE_DIR}/src/project"
     "${CMAKE_SOURCE_DIR}/src/host"
@@ -366,8 +491,6 @@ target_compile_definitions(morpheus PRIVATE
     MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
     MORPHEUS_AGENT_PROVIDER_PATH="${MORPHEUS_AGENT_PROVIDER}"
     MORPHEUS_OLLAMA_PROVIDER_PATH="${CMAKE_SOURCE_DIR}/tools/morpheus-ollama-agent"
-    MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
-    MORPHEUS_TCC_INCLUDE_PATH="${MORPHEUS_TCC_SOURCE_DIR}/include"
 )
 
 target_compile_options(morpheus PRIVATE
@@ -379,17 +502,15 @@ target_compile_options(morpheus PRIVATE
 )
 
 target_link_libraries(morpheus PRIVATE
-    morpheus_libtcc
+    morpheus_authoring
     morpheus_sqlite
-    yyjson
     miniz
-    morpheus_stb_image
     SDL3::SDL3-static
     "-framework Metal"
     "-framework QuartzCore"
     "-framework Foundation"
-    ${CMAKE_DL_LIBS}
 )
+morpheus_force_link_runtime_core(morpheus)
 
 set_target_properties(morpheus PROPERTIES
     ENABLE_EXPORTS TRUE
@@ -435,9 +556,97 @@ if(BUILD_TESTING)
     )
     add_test(NAME nuklear_large_draw COMMAND morpheus_nuklear_large_draw_test)
 
+    add_executable(morpheus_capability_registry_test
+        tests/capability_registry_test.c
+    )
+    target_include_directories(morpheus_capability_registry_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+    )
+    target_compile_options(morpheus_capability_registry_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    add_test(NAME capability_registry COMMAND morpheus_capability_registry_test)
+
+    add_executable(morpheus_authoring_projects_capability_test
+        tests/authoring_projects_capability_test.c
+    )
+    target_include_directories(morpheus_authoring_projects_capability_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
+        "${CMAKE_SOURCE_DIR}/src/project"
+    )
+    target_compile_options(morpheus_authoring_projects_capability_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_authoring_projects_capability_test PRIVATE
+        morpheus_authoring
+    )
+    add_test(
+        NAME authoring_projects_capability
+        COMMAND morpheus_authoring_projects_capability_test)
+
+    add_executable(morpheus_authoring_revisions_capability_test
+        tests/authoring_revisions_capability_test.c
+    )
+    target_include_directories(morpheus_authoring_revisions_capability_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
+        "${CMAKE_SOURCE_DIR}/src/project"
+    )
+    target_compile_options(morpheus_authoring_revisions_capability_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_authoring_revisions_capability_test PRIVATE
+        morpheus_authoring
+    )
+    add_test(
+        NAME authoring_revisions_capability
+        COMMAND morpheus_authoring_revisions_capability_test)
+
+    add_executable(morpheus_authoring_export_capability_test
+        tests/authoring_export_capability_test.c
+    )
+    target_include_directories(morpheus_authoring_export_capability_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
+    )
+    target_compile_options(morpheus_authoring_export_capability_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_authoring_export_capability_test PRIVATE
+        morpheus_authoring
+    )
+    add_test(
+        NAME authoring_export_capability
+        COMMAND morpheus_authoring_export_capability_test)
+
+    add_executable(morpheus_runtime_validation_test
+        tests/runtime_validation_test.c
+    )
+    target_compile_options(morpheus_runtime_validation_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_runtime_validation_test PRIVATE
+        morpheus_standalone_runtime
+    )
+    add_test(NAME runtime_validation COMMAND morpheus_runtime_validation_test)
+
     add_executable(morpheus_runtime_reload_test
         tests/runtime_reload_test.c
-        src/compiler/runtime_module.c
         src/host/json_service.c
     )
     add_dependencies(morpheus_runtime_reload_test morpheus_tinycc)
@@ -445,32 +654,28 @@ if(BUILD_TESTING)
         "${CMAKE_BINARY_DIR}/generated"
         "${CMAKE_SOURCE_DIR}/include"
         "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
         "${CMAKE_SOURCE_DIR}/src/compiler"
+        "${CMAKE_SOURCE_DIR}/src/project"
         "${CMAKE_SOURCE_DIR}/tinycc"
     )
     target_compile_definitions(morpheus_runtime_reload_test PRIVATE
-        MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
-        MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
-        MORPHEUS_TCC_INCLUDE_PATH="${MORPHEUS_TCC_SOURCE_DIR}/include"
         MORPHEUS_TEST_FIXTURE_ROOT="${CMAKE_SOURCE_DIR}/tests/fixtures"
     )
     target_compile_options(morpheus_runtime_reload_test PRIVATE
         -Wall
         -Wextra
         -Wpedantic
+        -Wno-c23-extensions
     )
     target_link_libraries(morpheus_runtime_reload_test PRIVATE
-        morpheus_libtcc
+        morpheus_authoring
         yyjson
-        ${CMAKE_DL_LIBS}
     )
     set_target_properties(morpheus_runtime_reload_test PROPERTIES ENABLE_EXPORTS TRUE)
     add_test(NAME runtime_reload COMMAND morpheus_runtime_reload_test)
 
-    add_executable(morpheus_http_service_test
-        tests/http_service_test.c
-        src/host/http_service.m
-    )
+    add_executable(morpheus_http_service_test tests/http_service_test.c)
     target_include_directories(morpheus_http_service_test PRIVATE
         "${CMAKE_SOURCE_DIR}/include"
         "${CMAKE_SOURCE_DIR}/src/host"
@@ -481,7 +686,7 @@ if(BUILD_TESTING)
         -Wpedantic
         $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>
     )
-    target_link_libraries(morpheus_http_service_test PRIVATE "-framework Foundation")
+    target_link_libraries(morpheus_http_service_test PRIVATE morpheus_runtime_core)
     add_test(NAME http_service COMMAND morpheus_http_service_test)
 
     add_executable(morpheus_revision_store_test
@@ -522,10 +727,7 @@ if(BUILD_TESTING)
     target_link_libraries(morpheus_sqlite_test PRIVATE morpheus_sqlite)
     add_test(NAME sqlite COMMAND morpheus_sqlite_test)
 
-    add_executable(morpheus_yyjson_test
-        tests/yyjson_test.c
-        src/host/json_service.c
-    )
+    add_executable(morpheus_yyjson_test tests/yyjson_test.c)
     target_include_directories(morpheus_yyjson_test PRIVATE
         "${CMAKE_SOURCE_DIR}/include"
     )
@@ -534,7 +736,7 @@ if(BUILD_TESTING)
         -Wextra
         -Wpedantic
     )
-    target_link_libraries(morpheus_yyjson_test PRIVATE yyjson)
+    target_link_libraries(morpheus_yyjson_test PRIVATE morpheus_runtime_core)
     add_test(NAME yyjson COMMAND morpheus_yyjson_test)
 
     add_executable(morpheus_miniz_test tests/miniz_test.c)
@@ -559,11 +761,7 @@ if(BUILD_TESTING)
     target_link_libraries(morpheus_stb_image_test PRIVATE morpheus_stb_image)
     add_test(NAME stb_image COMMAND morpheus_stb_image_test)
 
-    add_executable(morpheus_image_service_test
-        tests/image_service_test.m
-        src/host/image_service.m
-        src/host/http_service.m
-    )
+    add_executable(morpheus_image_service_test tests/image_service_test.m)
     target_include_directories(morpheus_image_service_test PRIVATE
         "${CMAKE_SOURCE_DIR}/include"
         "${CMAKE_SOURCE_DIR}/Nuklear"
@@ -578,9 +776,7 @@ if(BUILD_TESTING)
         -Wno-c23-extensions
     )
     target_link_libraries(morpheus_image_service_test PRIVATE
-        morpheus_stb_image
-        "-framework Foundation"
-        "-framework Metal"
+        morpheus_runtime_core
     )
     add_test(NAME image_service COMMAND morpheus_image_service_test)
     set_tests_properties(image_service PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
@@ -596,10 +792,16 @@ if(BUILD_TESTING)
 
     add_executable(morpheus_agent_session_test
         tests/agent_session_test.c
-        src/agent/agent_session.c
     )
     target_include_directories(morpheus_agent_session_test PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
         "${CMAKE_SOURCE_DIR}/src/agent"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
+        "${CMAKE_SOURCE_DIR}/src/compiler"
+        "${CMAKE_SOURCE_DIR}/src/project"
+        "${CMAKE_SOURCE_DIR}/tinycc"
     )
     target_compile_definitions(morpheus_agent_session_test PRIVATE
         MORPHEUS_FAKE_AGENT_PATH="$<TARGET_FILE:morpheus_fake_agent_provider>"
@@ -608,6 +810,9 @@ if(BUILD_TESTING)
         -Wall
         -Wextra
         -Wpedantic
+    )
+    target_link_libraries(morpheus_agent_session_test PRIVATE
+        morpheus_authoring
     )
     add_dependencies(morpheus_agent_session_test morpheus_fake_agent_provider)
     add_test(NAME agent_session COMMAND morpheus_agent_session_test)

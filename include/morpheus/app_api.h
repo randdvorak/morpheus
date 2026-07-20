@@ -1,9 +1,11 @@
 #ifndef MORPHEUS_APP_API_H
 #define MORPHEUS_APP_API_H
 
+#include <string.h>
+
 #include "morpheus/sdk.h"
 
-#define MORPHEUS_HOST_ABI_VERSION 3u
+#define MORPHEUS_HOST_ABI_VERSION 4u
 #define MORPHEUS_APP_ABI_VERSION 3u
 
 #define NK_INCLUDE_FIXED_TYPES
@@ -26,6 +28,19 @@ typedef enum morph_render_mode {
     MORPHEUS_RENDER_NUKLEAR_WINDOWS = 1
 } morph_render_mode;
 
+typedef struct morph_capability {
+    const char *identifier;
+    unsigned int abi_version;
+    unsigned long api_size;
+    const void *api;
+    void *context;
+} morph_capability;
+
+typedef struct morph_capability_registry {
+    const morph_capability *entries;
+    unsigned long count;
+} morph_capability_registry;
+
 typedef struct morph_host morph_host;
 
 struct morph_host {
@@ -37,7 +52,28 @@ struct morph_host {
     struct nk_context *nuklear;
     morph_http_service *http;
     morph_image_service *images;
+    const morph_capability_registry *capabilities;
 };
+
+/* Return the newest compatible provider, or NULL when it is unavailable. */
+static inline const morph_capability *morph_host_find_capability(
+    const morph_host *host,
+    const char *identifier,
+    unsigned int minimum_abi_version)
+{
+    const morph_capability *best = NULL;
+    unsigned long index;
+    if (!host || !host->capabilities || !host->capabilities->entries ||
+        !identifier) return NULL;
+    for (index = 0; index < host->capabilities->count; ++index) {
+        const morph_capability *candidate = &host->capabilities->entries[index];
+        if (!candidate->identifier || !candidate->api ||
+            candidate->abi_version < minimum_abi_version ||
+            strcmp(candidate->identifier, identifier) != 0) continue;
+        if (!best || candidate->abi_version > best->abi_version) best = candidate;
+    }
+    return best;
+}
 
 typedef struct morph_app_api {
     unsigned int abi_version;

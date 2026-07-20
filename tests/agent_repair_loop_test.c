@@ -79,14 +79,10 @@ int main(void)
     morph_agent_session session;
     morph_runtime_module module;
     morph_host host = {
-        MORPHEUS_HOST_ABI_VERSION,
-        NULL,
-        host_log,
-        host_label,
-        host_button,
-        NULL,
-        NULL,
-        NULL
+        .abi_version = MORPHEUS_HOST_ABI_VERSION,
+        .log = host_log,
+        .ui_label = host_label,
+        .ui_button = host_button
     };
 
     if (!mkdtemp(root)) {

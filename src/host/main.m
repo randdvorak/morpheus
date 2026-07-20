@@ -23,12 +23,15 @@ _Static_assert(sizeof(nk_draw_index) == 4,
 #define NK_METAL_IMPLEMENTATION
 #include "nuklear_metal.h"
 
-#include "runtime_module.h"
+#include "morpheus/authoring.h"
+#include "authoring_capabilities.h"
+#include "agent_session.h"
+#include "export_service.h"
 #include "http_service.h"
 #include "image_service.h"
-#include "revision_store.h"
 #include "project_store.h"
-#include "agent_session.h"
+#include "revision_store.h"
+#include "runtime_module.h"
 #include "theme.h"
 
 #define WINDOW_WIDTH 1200
@@ -170,8 +173,10 @@ static void clipboard_copy(nk_handle user, const char *text, int length)
 }
 
 static int checkpoint_active_module(
-    morph_revision_store *store,
-    morph_runtime_module *module,
+    const morph_authoring_revisions_api *revisions_api,
+    void *revisions_context,
+    const morph_authoring_modules_api *modules_api,
+    void *modules_context,
     morph_host *host,
     const char *source_path,
     char *error,
@@ -180,8 +185,8 @@ static int checkpoint_active_module(
     const void *state_data;
     unsigned long state_size;
 
-    if (!morph_runtime_module_capture_state(
-            module,
+    if (!modules_api->capture_state(
+            modules_context,
             host,
             &state_data,
             &state_size,
@@ -189,8 +194,8 @@ static int checkpoint_active_module(
             error_capacity)) {
         return 0;
     }
-    return morph_revision_store_checkpoint(
-        store,
+    return revisions_api->checkpoint(
+        revisions_context,
         source_path,
         state_data,
         state_size,
@@ -200,15 +205,19 @@ static int checkpoint_active_module(
 }
 
 static void record_reload_attempt(
-    const morph_revision_store *store,
-    const morph_runtime_module *module,
+    const morph_authoring_revisions_api *revisions_api,
+    void *revisions_context,
+    const morph_authoring_modules_api *modules_api,
+    void *modules_context,
     int succeeded,
     const char *message)
 {
     char error[512];
-    if (!morph_revision_store_record_attempt(
-            store,
-            morph_runtime_stage_name(module->last_stage),
+    if (!revisions_api->record_attempt(
+            revisions_context,
+            modules_api->stage_name(
+                modules_context,
+                modules_api->last_stage(modules_context)),
             succeeded,
             message,
             error,
@@ -218,7 +227,8 @@ static void record_reload_attempt(
 }
 
 static int copy_runtime_state(
-    morph_runtime_module *module,
+    const morph_authoring_modules_api *modules_api,
+    void *modules_context,
     morph_host *host,
     void **state_copy,
     unsigned long *state_size,
@@ -229,8 +239,8 @@ static int copy_runtime_state(
 
     *state_copy = NULL;
     *state_size = 0;
-    if (!morph_runtime_module_capture_state(
-            module,
+    if (!modules_api->capture_state(
+            modules_context,
             host,
             &state_data,
             state_size,
@@ -260,20 +270,40 @@ int main(int argc, char **argv)
     struct nk_metal metal;
     struct nk_colorf background = {0.22f, 0.27f, 0.33f, 1.0f};
     morph_ui_context ui;
-    morph_host host;
+    morph_host host = {0};
     morph_runtime_module module;
     morph_revision_store revisions;
     morph_project_store projects;
+    morph_capability authoring_entries[5] = {{0}};
+    morph_capability_registry authoring_capabilities = {0};
+    morph_host authoring_host = {0};
+    const morph_capability *projects_provider = NULL;
+    const morph_authoring_projects_api *projects_api = NULL;
+    void *projects_context = NULL;
+    const morph_capability *revisions_provider = NULL;
+    const morph_authoring_revisions_api *revisions_api = NULL;
+    void *revisions_context = NULL;
+    const morph_capability *modules_provider = NULL;
+    const morph_authoring_modules_api *modules_api = NULL;
+    void *modules_context = NULL;
+    const morph_capability *agent_provider = NULL;
+    const morph_authoring_agent_api *agent_api = NULL;
+    void *agent_context = NULL;
+    const morph_capability *export_provider = NULL;
+    const morph_authoring_export_api *export_api = NULL;
+    void *export_context = NULL;
+    unsigned long authoring_capability_count = 0;
     morph_agent_session agent_session;
+    morph_export_service export_service;
     morph_http_service *http_service = NULL;
     morph_image_service *image_service = NULL;
     char module_error[4096] = {0};
     char store_error[4096] = {0};
     char revision_label[128];
-    char agent_request[MORPH_AGENT_REQUEST_CAPACITY] = {0};
-    char ollama_model[MORPH_AGENT_MODEL_CAPACITY] = {0};
+    char agent_request[MORPHEUS_AUTHORING_AGENT_REQUEST_CAPACITY] = {0};
+    char ollama_model[MORPHEUS_AUTHORING_AGENT_MODEL_CAPACITY] = {0};
     char agent_status[256] = "Agent ready";
-    char agent_root[MORPH_AGENT_PATH_CAPACITY];
+    char agent_root[MORPHEUS_AUTHORING_AGENT_PATH_CAPACITY];
     char module_source[MORPH_PROJECT_PATH_CAPACITY];
     char workspace_root[MORPH_PROJECT_PATH_CAPACITY];
     char assets_root[MORPH_PROJECT_PATH_CAPACITY];
@@ -323,16 +353,72 @@ int main(int argc, char **argv)
         const char *root_override = getenv("MORPHEUS_PROJECTS_ROOT");
         snprintf(projects_root, sizeof(projects_root), "%s",
             root_override && *root_override ? root_override : MORPHEUS_SOURCE_ROOT "/projects");
-        projects_enabled = morph_project_store_init(
-            &projects, projects_root, store_error, sizeof(store_error));
-        if (!projects_enabled || !morph_project_store_paths(
-                &projects,
+        authoring_entries[authoring_capability_count++] =
+            morph_authoring_projects_capability(&projects);
+        authoring_capabilities.entries = authoring_entries;
+        authoring_capabilities.count = authoring_capability_count;
+        authoring_host.abi_version = MORPHEUS_HOST_ABI_VERSION;
+        authoring_host.capabilities = &authoring_capabilities;
+        projects_provider = morph_host_find_capability(
+            &authoring_host,
+            MORPHEUS_AUTHORING_PROJECTS_CAPABILITY,
+            MORPHEUS_AUTHORING_PROJECTS_ABI_VERSION);
+        projects_api = morph_authoring_projects_from_capability(
+            projects_provider);
+        projects_context = projects_provider ? projects_provider->context : NULL;
+        projects_enabled = projects_api && projects_api->init(
+            projects_context, projects_root, store_error, sizeof(store_error));
+        if (!projects_enabled || !projects_api || !projects_api->paths(
+                projects_context,
                 workspace_root, sizeof(workspace_root),
                 module_source, sizeof(module_source),
                 assets_root, sizeof(assets_root))) {
             fprintf(stderr, "Unable to initialize projects: %s\n", store_error);
             return EXIT_FAILURE;
         }
+    }
+    authoring_entries[authoring_capability_count++] =
+        morph_authoring_revisions_capability(&revisions);
+    authoring_capabilities.entries = authoring_entries;
+    authoring_capabilities.count = authoring_capability_count;
+    authoring_host.abi_version = MORPHEUS_HOST_ABI_VERSION;
+    authoring_host.capabilities = &authoring_capabilities;
+    revisions_provider = morph_host_find_capability(
+        &authoring_host,
+        MORPHEUS_AUTHORING_REVISIONS_CAPABILITY,
+        MORPHEUS_AUTHORING_REVISIONS_ABI_VERSION);
+    revisions_api = morph_authoring_revisions_from_capability(revisions_provider);
+    revisions_context = revisions_provider ? revisions_provider->context : NULL;
+    authoring_entries[authoring_capability_count++] =
+        morph_authoring_modules_capability(&module);
+    authoring_capabilities.count = authoring_capability_count;
+    modules_provider = morph_host_find_capability(
+        &authoring_host,
+        MORPHEUS_AUTHORING_MODULES_CAPABILITY,
+        MORPHEUS_AUTHORING_MODULES_ABI_VERSION);
+    modules_api = morph_authoring_modules_from_capability(modules_provider);
+    modules_context = modules_provider ? modules_provider->context : NULL;
+    authoring_entries[authoring_capability_count++] =
+        morph_authoring_agent_capability(&agent_session);
+    authoring_capabilities.count = authoring_capability_count;
+    agent_provider = morph_host_find_capability(
+        &authoring_host,
+        MORPHEUS_AUTHORING_AGENT_CAPABILITY,
+        MORPHEUS_AUTHORING_AGENT_ABI_VERSION);
+    agent_api = morph_authoring_agent_from_capability(agent_provider);
+    agent_context = agent_provider ? agent_provider->context : NULL;
+    authoring_entries[authoring_capability_count++] =
+        morph_authoring_export_capability(&export_service, NULL);
+    authoring_capabilities.count = authoring_capability_count;
+    export_provider = morph_host_find_capability(
+        &authoring_host,
+        MORPHEUS_AUTHORING_EXPORT_CAPABILITY,
+        MORPHEUS_AUTHORING_EXPORT_ABI_VERSION);
+    export_api = morph_authoring_export_from_capability(export_provider);
+    export_context = export_provider ? export_provider->context : NULL;
+    if (!revisions_api || !modules_api || !agent_api || !export_api) {
+        fprintf(stderr, "Unable to initialize authoring capabilities\n");
+        return EXIT_FAILURE;
     }
     agent_provider_path = getenv("MORPHEUS_AGENT_PROVIDER");
     agent_provider_is_custom = agent_provider_path && *agent_provider_path;
@@ -358,8 +444,8 @@ int main(int argc, char **argv)
     }
     snprintf(agent_root, sizeof(agent_root), "%s/agent", workspace_root);
 
-    morph_runtime_module_init(&module);
-    morph_agent_session_reset(&agent_session);
+    modules_api->init(modules_context);
+    agent_api->reset(agent_context);
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
@@ -435,14 +521,14 @@ int main(int argc, char **argv)
         SDL_Log("Image service unavailable; generated app images disabled");
     }
 
-    revision_store_ready = morph_revision_store_init(
-        &revisions,
+    revision_store_ready = revisions_api->init(
+        revisions_context,
         workspace_root,
         store_error,
         sizeof(store_error));
     if (revision_store_ready) {
-        revision_store_ready = morph_revision_store_begin_session(
-            &revisions,
+        revision_store_ready = revisions_api->begin_session(
+            revisions_context,
             &recovered_from_crash,
             store_error,
             sizeof(store_error));
@@ -452,9 +538,9 @@ int main(int argc, char **argv)
     } else if (recovered_from_crash) {
         SDL_Log(
             "Previous generated application exited abnormally; rolled back to revision %lu",
-            revisions.active_revision);
-        (void)morph_revision_store_record_attempt(
-            &revisions,
+            revisions_api->active_revision(revisions_context));
+        (void)revisions_api->record_attempt(
+            revisions_context,
             "startup",
             0,
             "abnormal exit detected; automatic rollback",
@@ -462,8 +548,8 @@ int main(int argc, char **argv)
             sizeof(store_error));
     }
 
-    agent_ready = revision_store_ready && morph_agent_session_init(
-            &agent_session,
+    agent_ready = revision_store_ready && agent_api->init(
+            agent_context,
             agent_root,
             agent_provider_path,
             store_error,
@@ -475,78 +561,84 @@ int main(int argc, char **argv)
             "Agent unavailable: %.220s",
             revision_store_ready ? store_error : "revision store is required");
     } else {
-        (void)morph_agent_session_set_model(
-            &agent_session,
+        (void)agent_api->set_model(
+            agent_context,
             agent_uses_ollama ? ollama_model : "",
             store_error,
             sizeof(store_error));
     }
 
-    if (revision_store_ready && revisions.active_revision) {
+    if (revision_store_ready && revisions_api->active_revision(revisions_context)) {
         char accepted_source[MORPH_REVISION_PATH_CAPACITY];
         void *accepted_state = NULL;
         unsigned long accepted_state_size = 0;
-        int accepted_loaded = morph_revision_store_load(
-                &revisions,
-                revisions.active_revision,
+        int accepted_loaded = revisions_api->load(
+                revisions_context,
+                revisions_api->active_revision(revisions_context),
                 accepted_source,
                 sizeof(accepted_source),
                 &accepted_state,
                 &accepted_state_size,
                 module_error,
                 sizeof(module_error)) &&
-            morph_runtime_module_compile_candidate(
-                &module,
+            modules_api->compile_candidate(
+                modules_context,
                 accepted_source,
                 module_error,
                 sizeof(module_error)) &&
-            morph_runtime_module_activate_candidate_with_state(
-                &module,
+            modules_api->activate_candidate_with_state(
+                modules_context,
                 &host,
                 accepted_state,
                 accepted_state_size,
                 module_error,
                 sizeof(module_error));
-        morph_revision_store_release_state(accepted_state);
-        record_reload_attempt(&revisions, &module, accepted_loaded, module_error);
+        revisions_api->release_state(revisions_context, accepted_state);
+        record_reload_attempt(
+            revisions_api, revisions_context,
+            modules_api, modules_context, accepted_loaded, module_error);
         if (!accepted_loaded) {
             SDL_Log("Accepted revision failed; entering safe mode: %s", module_error);
-            (void)morph_revision_store_set_active(
-                &revisions,
+            (void)revisions_api->set_active(
+                revisions_context,
                 0,
                 store_error,
                 sizeof(store_error));
-            (void)morph_revision_store_refresh_session(
-                &revisions,
+            (void)revisions_api->refresh_session(
+                revisions_context,
                 store_error,
                 sizeof(store_error));
         }
     }
 
-    if (!module.api) {
-        int initial_loaded = morph_runtime_module_reload(
-            &module,
+    if (!modules_api->is_active(modules_context)) {
+        int initial_loaded = modules_api->reload(
+            modules_context,
             &host,
             module_source,
             module_error,
             sizeof(module_error));
         if (revision_store_ready) {
-            record_reload_attempt(&revisions, &module, initial_loaded, module_error);
+            record_reload_attempt(
+                revisions_api, revisions_context,
+                modules_api, modules_context, initial_loaded, module_error);
         }
         if (!initial_loaded) {
             SDL_Log("Initial module failed: %s", module_error);
         } else if (revision_store_ready &&
             !checkpoint_active_module(
-                &revisions,
-                &module,
+                revisions_api,
+                revisions_context,
+                modules_api,
+                modules_context,
                 &host,
                 module_source,
                 module_error,
                 sizeof(module_error))) {
             SDL_Log("Initial checkpoint failed: %s", module_error);
         } else if (revision_store_ready &&
-            !morph_revision_store_refresh_session(
-                &revisions,
+            !revisions_api->refresh_session(
+                revisions_context,
                 store_error,
                 sizeof(store_error))) {
             SDL_Log("Unable to arm crash recovery: %s", store_error);
@@ -578,7 +670,7 @@ int main(int argc, char **argv)
 
         morph_http_service_tick(http_service);
         morph_image_service_tick(image_service);
-        morph_runtime_module_update(&module, &host, dt);
+        modules_api->update(modules_context, &host, dt);
 
         if (nk_begin(&ctx,
                 "Morpheus Host",
@@ -587,23 +679,36 @@ int main(int argc, char **argv)
                 NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
             nk_layout_row_dynamic(&ctx, 28.0f, 1);
             nk_label(&ctx, "Native host: SDL3 + Metal + Nuklear", NK_TEXT_LEFT);
-            if (projects_enabled) {
-                const char *project_names[MORPH_PROJECT_MAX_PROJECTS];
+            if (projects_enabled && projects_api) {
+                morph_authoring_project_info
+                    project_info[MORPHEUS_AUTHORING_MAX_PROJECTS];
+                const char *project_names[MORPHEUS_AUTHORING_MAX_PROJECTS];
+                unsigned int project_count = projects_api->count(projects_context);
+                unsigned int active_index = projects_api->active_index(projects_context);
                 unsigned int project_index;
                 int selected;
-                for (project_index = 0; project_index < projects.count; ++project_index) {
-                    project_names[project_index] = projects.projects[project_index].name;
+                if (project_count > MORPHEUS_AUTHORING_MAX_PROJECTS) {
+                    project_count = MORPHEUS_AUTHORING_MAX_PROJECTS;
+                }
+                for (project_index = 0; project_index < project_count; ++project_index) {
+                    if (!projects_api->project(
+                            projects_context, project_index, &project_info[project_index])) {
+                        project_count = project_index;
+                        break;
+                    }
+                    project_names[project_index] = project_info[project_index].name;
                 }
                 nk_layout_row_dynamic(&ctx, 28.0f, 1);
                 selected = nk_combo(
                     &ctx,
                     project_names,
-                    (int)projects.count,
-                    (int)projects.active_index,
+                    (int)project_count,
+                    (int)active_index,
                     28,
                     nk_vec2(300.0f, 220.0f));
-                if (selected != (int)projects.active_index &&
-                    !agent_preview_active && agent_session.status != MORPH_AGENT_RUNNING) {
+                if (selected != (int)active_index &&
+                    !agent_preview_active &&
+                    agent_api->status(agent_context) != MORPHEUS_AUTHORING_AGENT_RUNNING) {
                     project_switch_requested = selected;
                 }
                 nk_layout_row_dynamic(&ctx, 30.0f, 2);
@@ -616,22 +721,25 @@ int main(int argc, char **argv)
                     nk_filter_default);
                 new_project_name[new_project_name_length] = '\0';
                 if (nk_button_label(&ctx, "New App") && new_project_name_length > 0 &&
-                    !agent_preview_active && agent_session.status != MORPH_AGENT_RUNNING) {
+                    !agent_preview_active &&
+                    agent_api->status(agent_context) != MORPHEUS_AUTHORING_AGENT_RUNNING) {
                     project_create_requested = 1;
                 }
             }
             nk_label(&ctx,
-                module.api ? "Runtime C module: active" : "Runtime C module: unavailable",
+                modules_api->is_active(modules_context)
+                    ? "Runtime C module: active"
+                    : "Runtime C module: unavailable",
                 NK_TEXT_LEFT);
-            if (module.api && module.api->name) {
-                nk_label(&ctx, module.api->name, NK_TEXT_LEFT);
+            if (modules_api->active_name(modules_context)) {
+                nk_label(&ctx, modules_api->active_name(modules_context), NK_TEXT_LEFT);
             }
             if (revision_store_ready) {
                 snprintf(
                     revision_label,
                     sizeof(revision_label),
                     "Accepted revision: %lu",
-                    revisions.active_revision);
+                    revisions_api->active_revision(revisions_context));
                 nk_label(&ctx, revision_label, NK_TEXT_LEFT);
                 if (recovered_from_crash) {
                     nk_label(
@@ -643,13 +751,14 @@ int main(int argc, char **argv)
 
             nk_layout_row_dynamic(&ctx, 34.0f, 1);
             if (!agent_preview_active &&
-                agent_session.status != MORPH_AGENT_RUNNING &&
+                agent_api->status(agent_context) != MORPHEUS_AUTHORING_AGENT_RUNNING &&
                 nk_button_label(&ctx, "Recompile current app")) {
                 reload_requested = 1;
             }
             if (!agent_preview_active &&
-                agent_session.status != MORPH_AGENT_RUNNING &&
-                revision_store_ready && revisions.active_revision > 1) {
+                agent_api->status(agent_context) != MORPHEUS_AUTHORING_AGENT_RUNNING &&
+                revision_store_ready &&
+                revisions_api->active_revision(revisions_context) > 1) {
                 nk_layout_row_dynamic(&ctx, 34.0f, 1);
                 if (nk_button_label(&ctx, "Rollback previous revision")) {
                     rollback_requested = 1;
@@ -660,7 +769,7 @@ int main(int argc, char **argv)
             nk_label(&ctx, "Agent policy: isolated manual preview", NK_TEXT_LEFT);
             nk_layout_row_dynamic(&ctx, 30.0f, 1);
             if (!agent_provider_is_custom && !agent_preview_active &&
-                agent_session.status != MORPH_AGENT_RUNNING) {
+                agent_api->status(agent_context) != MORPHEUS_AUTHORING_AGENT_RUNNING) {
                 if (nk_button_label(
                         &ctx,
                         agent_uses_ollama
@@ -702,7 +811,7 @@ int main(int argc, char **argv)
             agent_request[agent_request_length] = '\0';
             nk_layout_row_dynamic(&ctx, 34.0f, 1);
             if (agent_ready && !agent_preview_active &&
-                agent_session.status != MORPH_AGENT_RUNNING &&
+                agent_api->status(agent_context) != MORPHEUS_AUTHORING_AGENT_RUNNING &&
                 agent_request_length > 0 &&
                 nk_button_label(&ctx, "Ask coding agent")) {
                 agent_submit_requested = 1;
@@ -730,16 +839,16 @@ int main(int argc, char **argv)
         if (agent_accept_requested || agent_reject_requested) {
             /* Keep preview decisions responsive even when generated rendering
                is expensive. The host controls are still drawn and cleared. */
-        } else if (morph_runtime_module_render_mode(&module) ==
+        } else if (modules_api->render_mode(modules_context) ==
                 MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
-            morph_runtime_module_render_ui(&module, &host);
+            modules_api->render_ui(modules_context, &host);
         } else {
             if (nk_begin(&ctx,
                     "Generated Application",
                     nk_rect(500, 30, 520, 300),
                     NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE |
                     NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
-                morph_runtime_module_render_ui(&module, &host);
+                modules_api->render_ui(modules_context, &host);
             }
             nk_end(&ctx);
         }
@@ -758,12 +867,13 @@ int main(int argc, char **argv)
 
         if (project_create_requested) {
             project_create_requested = 0;
-            if (morph_project_store_create(
-                    &projects,
+            if (projects_api && projects_api->create(
+                    projects_context,
                     new_project_name,
                     module_error,
                     sizeof(module_error))) {
-                project_switch_requested = (int)projects.active_index;
+                project_switch_requested =
+                    (int)projects_api->active_index(projects_context);
                 new_project_name_length = 0;
                 new_project_name[0] = '\0';
             }
@@ -777,27 +887,32 @@ int main(int argc, char **argv)
             unsigned int selected_index = (unsigned int)project_switch_requested;
             project_switch_requested = -1;
 
-            if (module.api && revision_store_ready) {
+            if (modules_api->is_active(modules_context) && revision_store_ready) {
                 (void)checkpoint_active_module(
-                    &revisions, &module, &host, module_source,
+                    revisions_api, revisions_context,
+                    modules_api, modules_context,
+                    &host, module_source,
                     store_error, sizeof(store_error));
-                (void)morph_revision_store_end_session(
-                    &revisions, store_error, sizeof(store_error));
+                (void)revisions_api->end_session(
+                    revisions_context, store_error, sizeof(store_error));
             }
-            morph_runtime_module_destroy(&module, &host);
-            morph_runtime_module_init(&module);
-            morph_agent_session_cancel(&agent_session);
-            morph_agent_session_reset(&agent_session);
+            modules_api->destroy(modules_context, &host);
+            modules_api->init(modules_context);
+            agent_api->cancel(agent_context);
+            agent_api->reset(agent_context);
             free(preview_restore_state);
             preview_restore_state = NULL;
             preview_restore_state_size = 0;
             agent_preview_active = 0;
             recovered_from_crash = 0;
 
-            if (!morph_project_store_select(
-                    &projects, selected_index, module_error, sizeof(module_error)) ||
-                !morph_project_store_paths(
-                    &projects,
+            if (!projects_api || !projects_api->select(
+                    projects_context,
+                    selected_index,
+                    module_error,
+                    sizeof(module_error)) ||
+                !projects_api->paths(
+                    projects_context,
                     workspace_root, sizeof(workspace_root),
                     module_source, sizeof(module_source),
                     assets_root, sizeof(assets_root))) {
@@ -805,52 +920,55 @@ int main(int argc, char **argv)
                 agent_ready = 0;
             } else {
                 snprintf(agent_root, sizeof(agent_root), "%s/agent", workspace_root);
-                revision_store_ready = morph_revision_store_init(
-                    &revisions, workspace_root, store_error, sizeof(store_error));
+                revision_store_ready = revisions_api->init(
+                    revisions_context, workspace_root, store_error, sizeof(store_error));
                 if (revision_store_ready) {
-                    revision_store_ready = morph_revision_store_begin_session(
-                        &revisions, &recovered_from_crash,
+                    revision_store_ready = revisions_api->begin_session(
+                        revisions_context, &recovered_from_crash,
                         store_error, sizeof(store_error));
                 }
-                agent_ready = revision_store_ready && morph_agent_session_init(
-                    &agent_session, agent_root, agent_provider_path,
+                agent_ready = revision_store_ready && agent_api->init(
+                    agent_context, agent_root, agent_provider_path,
                     store_error, sizeof(store_error));
                 if (agent_ready) {
-                    agent_ready = morph_agent_session_set_model(
-                        &agent_session,
+                    agent_ready = agent_api->set_model(
+                        agent_context,
                         agent_uses_ollama ? ollama_model : "",
                         store_error,
                         sizeof(store_error));
                 }
-                if (revision_store_ready && revisions.active_revision) {
-                    selected_loaded = morph_revision_store_load(
-                            &revisions,
-                            revisions.active_revision,
+                if (revision_store_ready &&
+                    revisions_api->active_revision(revisions_context)) {
+                    selected_loaded = revisions_api->load(
+                            revisions_context,
+                            revisions_api->active_revision(revisions_context),
                             accepted_source,
                             sizeof(accepted_source),
                             &accepted_state,
                             &accepted_state_size,
                             module_error,
                             sizeof(module_error)) &&
-                        morph_runtime_module_compile_candidate(
-                            &module, accepted_source,
+                        modules_api->compile_candidate(
+                            modules_context, accepted_source,
                             module_error, sizeof(module_error)) &&
-                        morph_runtime_module_activate_candidate_with_state(
-                            &module, &host,
+                        modules_api->activate_candidate_with_state(
+                            modules_context, &host,
                             accepted_state, accepted_state_size,
                             module_error, sizeof(module_error));
-                    morph_revision_store_release_state(accepted_state);
+                    revisions_api->release_state(revisions_context, accepted_state);
                 }
                 if (!selected_loaded) {
-                    selected_loaded = morph_runtime_module_reload(
-                        &module, &host, module_source,
+                    selected_loaded = modules_api->reload(
+                        modules_context, &host, module_source,
                         module_error, sizeof(module_error));
                     if (selected_loaded && revision_store_ready) {
                         selected_loaded = checkpoint_active_module(
-                                &revisions, &module, &host, module_source,
+                                revisions_api, revisions_context,
+                                modules_api, modules_context,
+                                &host, module_source,
                                 module_error, sizeof(module_error)) &&
-                            morph_revision_store_refresh_session(
-                                &revisions, module_error, sizeof(module_error));
+                            revisions_api->refresh_session(
+                                revisions_context, module_error, sizeof(module_error));
                     }
                 }
                 snprintf(
@@ -865,15 +983,15 @@ int main(int argc, char **argv)
             agent_provider_path = agent_uses_ollama
                 ? MORPHEUS_OLLAMA_PROVIDER_PATH
                 : MORPHEUS_AGENT_PROVIDER_PATH;
-            agent_ready = morph_agent_session_init(
-                &agent_session,
+            agent_ready = agent_api->init(
+                agent_context,
                 agent_root,
                 agent_provider_path,
                 module_error,
                 sizeof(module_error));
             if (agent_ready) {
-                agent_ready = morph_agent_session_set_model(
-                    &agent_session,
+                agent_ready = agent_api->set_model(
+                    agent_context,
                     agent_uses_ollama ? ollama_model : "",
                     module_error,
                     sizeof(module_error));
@@ -897,37 +1015,39 @@ int main(int argc, char **argv)
             int source_updated = 0;
             agent_accept_requested = 0;
             if (agent_preview_active && revision_store_ready) {
-                source_updated = morph_agent_session_accept_source(
-                        &agent_session,
+                source_updated = agent_api->accept_source(
+                        agent_context,
                         module_source,
                         module_error,
                         sizeof(module_error));
                 accepted = source_updated && checkpoint_active_module(
-                    &revisions,
-                    &module,
+                    revisions_api,
+                    revisions_context,
+                    modules_api,
+                    modules_context,
                     &host,
-                    agent_session.candidate_path,
+                    agent_api->candidate_path(agent_context),
                     module_error,
                     sizeof(module_error));
                 if (source_updated && !accepted) {
-                    (void)morph_agent_session_restore_source(
-                        &agent_session,
+                    (void)agent_api->restore_source(
+                        agent_context,
                         module_source,
                         module_error,
                         sizeof(module_error));
                 }
             }
             if (accepted) {
-                if (!morph_revision_store_refresh_session(
-                        &revisions,
+                if (!revisions_api->refresh_session(
+                        revisions_context,
                         store_error,
                         sizeof(store_error))) {
                     SDL_Log("Unable to arm accepted revision crash recovery: %s", store_error);
                 }
-                (void)morph_agent_session_record_outcome(
-                    &agent_session,
+                (void)agent_api->record_outcome(
+                    agent_context,
                     "accepted",
-                    revisions.active_revision,
+                    revisions_api->active_revision(revisions_context),
                     store_error,
                     sizeof(store_error));
                 free(preview_restore_state);
@@ -936,34 +1056,38 @@ int main(int argc, char **argv)
                 agent_preview_active = 0;
                 agent_request_length = 0;
                 agent_request[0] = '\0';
-                snprintf(agent_status, sizeof(agent_status), "Accepted as revision %lu", revisions.active_revision);
+                snprintf(
+                    agent_status,
+                    sizeof(agent_status),
+                    "Accepted as revision %lu",
+                    revisions_api->active_revision(revisions_context));
                 module_error[0] = '\0';
             }
         } else if (agent_reject_requested) {
             int rejected;
             agent_reject_requested = 0;
             rejected = agent_preview_active &&
-                morph_runtime_module_compile_candidate(
-                    &module,
-                    agent_session.source_before_path,
+                modules_api->compile_candidate(
+                    modules_context,
+                    agent_api->source_before_path(agent_context),
                     module_error,
                     sizeof(module_error)) &&
-                morph_runtime_module_activate_candidate_with_state(
-                    &module,
+                modules_api->activate_candidate_with_state(
+                    modules_context,
                     &host,
                     preview_restore_state,
                     preview_restore_state_size,
                     module_error,
                     sizeof(module_error));
             if (rejected) {
-                (void)morph_revision_store_refresh_session(
-                    &revisions,
+                (void)revisions_api->refresh_session(
+                    revisions_context,
                     store_error,
                     sizeof(store_error));
-                (void)morph_agent_session_record_outcome(
-                    &agent_session,
+                (void)agent_api->record_outcome(
+                    agent_context,
                     "rejected",
-                    revisions.active_revision,
+                    revisions_api->active_revision(revisions_context),
                     store_error,
                     sizeof(store_error));
                 free(preview_restore_state);
@@ -981,10 +1105,10 @@ int main(int argc, char **argv)
             int base_ready = 1;
 
             agent_submit_requested = 0;
-            if (revisions.active_revision) {
-                base_ready = morph_revision_store_load(
-                    &revisions,
-                    revisions.active_revision,
+            if (revisions_api->active_revision(revisions_context)) {
+                base_ready = revisions_api->load(
+                    revisions_context,
+                    revisions_api->active_revision(revisions_context),
                     accepted_source,
                     sizeof(accepted_source),
                     &accepted_state,
@@ -993,26 +1117,30 @@ int main(int argc, char **argv)
                     sizeof(module_error));
                 agent_base_source = accepted_source;
             }
-            morph_revision_store_release_state(accepted_state);
-            if (base_ready && morph_agent_session_set_model(
-                    &agent_session,
+            revisions_api->release_state(revisions_context, accepted_state);
+            if (base_ready && agent_api->set_model(
+                    agent_context,
                     agent_uses_ollama ? ollama_model : "",
                     module_error,
                     sizeof(module_error)) &&
-                morph_agent_session_begin(
-                    &agent_session,
+                agent_api->begin(
+                    agent_context,
                     agent_request,
                     agent_base_source,
                     MORPHEUS_SOURCE_ROOT "/include/morpheus/app_api.h",
                     MORPHEUS_SOURCE_ROOT "/include/morpheus/sdk.h",
                     module_error,
                     sizeof(module_error)) &&
-                morph_agent_session_start_attempt(
-                    &agent_session,
+                agent_api->start_attempt(
+                    agent_context,
                     "",
                     module_error,
                     sizeof(module_error))) {
-                snprintf(agent_status, sizeof(agent_status), "Agent attempt 1 of %d running", MORPH_AGENT_MAX_ATTEMPTS);
+                snprintf(
+                    agent_status,
+                    sizeof(agent_status),
+                    "Agent attempt 1 of %d running",
+                    MORPHEUS_AUTHORING_AGENT_MAX_ATTEMPTS);
                 module_error[0] = '\0';
             }
         } else if (rollback_requested) {
@@ -1024,9 +1152,9 @@ int main(int argc, char **argv)
 
             rollback_requested = 0;
             rollback_succeeded =
-                morph_revision_store_previous(&revisions, &rollback_revision) &&
-                morph_revision_store_load(
-                    &revisions,
+                revisions_api->previous(revisions_context, &rollback_revision) &&
+                revisions_api->load(
+                    revisions_context,
                     rollback_revision,
                     rollback_source,
                     sizeof(rollback_source),
@@ -1034,31 +1162,33 @@ int main(int argc, char **argv)
                     &rollback_state_size,
                     module_error,
                     sizeof(module_error)) &&
-                morph_runtime_module_compile_candidate(
-                    &module,
+                modules_api->compile_candidate(
+                    modules_context,
                     rollback_source,
                     module_error,
                     sizeof(module_error)) &&
-                morph_runtime_module_activate_candidate_with_state(
-                    &module,
+                modules_api->activate_candidate_with_state(
+                    modules_context,
                     &host,
                     rollback_state,
                     rollback_state_size,
                     module_error,
                     sizeof(module_error)) &&
-                morph_revision_store_set_active(
-                    &revisions,
+                revisions_api->set_active(
+                    revisions_context,
                     rollback_revision,
                     module_error,
                     sizeof(module_error)) &&
-                morph_revision_store_refresh_session(
-                    &revisions,
+                revisions_api->refresh_session(
+                    revisions_context,
                     module_error,
                     sizeof(module_error));
-            morph_revision_store_release_state(rollback_state);
+            revisions_api->release_state(revisions_context, rollback_state);
             record_reload_attempt(
-                &revisions,
-                &module,
+                revisions_api,
+                revisions_context,
+                modules_api,
+                modules_context,
                 rollback_succeeded,
                 module_error);
             if (rollback_succeeded) {
@@ -1067,33 +1197,37 @@ int main(int argc, char **argv)
         } else if (reload_requested) {
             int reload_succeeded;
             reload_requested = 0;
-            reload_succeeded = morph_runtime_module_compile_candidate(
-                    &module,
+            reload_succeeded = modules_api->compile_candidate(
+                    modules_context,
                     module_source,
                     module_error,
                     sizeof(module_error)) &&
-                morph_runtime_module_activate_candidate(
-                    &module,
+                modules_api->activate_candidate(
+                    modules_context,
                     &host,
                     module_error,
                     sizeof(module_error));
             if (revision_store_ready) {
                 record_reload_attempt(
-                    &revisions,
-                    &module,
+                    revisions_api,
+                    revisions_context,
+                    modules_api,
+                    modules_context,
                     reload_succeeded,
                     module_error);
             }
             if (reload_succeeded && revision_store_ready) {
                 reload_succeeded = checkpoint_active_module(
-                    &revisions,
-                    &module,
+                    revisions_api,
+                    revisions_context,
+                    modules_api,
+                    modules_context,
                     &host,
                     module_source,
                     module_error,
                     sizeof(module_error)) &&
-                    morph_revision_store_refresh_session(
-                        &revisions,
+                    revisions_api->refresh_session(
+                        revisions_context,
                         module_error,
                         sizeof(module_error));
             }
@@ -1102,66 +1236,70 @@ int main(int argc, char **argv)
             }
         }
 
-        if (agent_session.status == MORPH_AGENT_RUNNING) {
+        if (agent_api->status(agent_context) == MORPHEUS_AUTHORING_AGENT_RUNNING) {
             int agent_finished = 0;
-            if (!morph_agent_session_poll(
-                    &agent_session,
+            if (!agent_api->poll(
+                    agent_context,
                     &agent_finished,
                     module_error,
                     sizeof(module_error))) {
                 snprintf(agent_status, sizeof(agent_status), "Agent process monitoring failed");
-                (void)morph_agent_session_record_outcome(
-                    &agent_session,
+                (void)agent_api->record_outcome(
+                    agent_context,
                     "failed",
-                    revisions.active_revision,
+                    revisions_api->active_revision(revisions_context),
                     store_error,
                     sizeof(store_error));
             } else if (agent_finished) {
                 int candidate_succeeded = 0;
-                if (agent_session.status == MORPH_AGENT_PROVIDER_SUCCEEDED) {
-                    candidate_succeeded = morph_agent_session_candidate_changed(
-                            &agent_session,
+                if (agent_api->status(agent_context) ==
+                    MORPHEUS_AUTHORING_AGENT_PROVIDER_SUCCEEDED) {
+                    candidate_succeeded = agent_api->candidate_changed(
+                            agent_context,
                             module_error,
                             sizeof(module_error)) &&
-                        morph_runtime_module_compile_candidate(
-                            &module,
-                            agent_session.candidate_path,
+                        modules_api->compile_candidate(
+                            modules_context,
+                            agent_api->candidate_path(agent_context),
                             module_error,
                             sizeof(module_error)) &&
                         copy_runtime_state(
-                            &module,
+                            modules_api,
+                            modules_context,
                             &host,
                             &preview_restore_state,
                             &preview_restore_state_size,
                             module_error,
                             sizeof(module_error));
                     if (candidate_succeeded && revision_store_ready) {
-                        candidate_succeeded = morph_revision_store_end_session(
-                            &revisions,
+                        candidate_succeeded = revisions_api->end_session(
+                            revisions_context,
                             store_error,
                             sizeof(store_error));
                     }
                     if (candidate_succeeded) {
-                        candidate_succeeded = morph_runtime_module_activate_candidate(
-                            &module,
+                        candidate_succeeded = modules_api->activate_candidate(
+                            modules_context,
                             &host,
                             module_error,
                             sizeof(module_error));
                     }
-                    (void)morph_agent_session_record_build(
-                        &agent_session,
+                    (void)agent_api->record_build(
+                        agent_context,
                         candidate_succeeded,
-                        morph_runtime_stage_name(module.last_stage),
+                        modules_api->stage_name(
+                            modules_context,
+                            modules_api->last_stage(modules_context)),
                         module_error,
                         store_error,
                         sizeof(store_error));
-                    (void)morph_agent_session_create_patch(
-                        &agent_session,
+                    (void)agent_api->create_patch(
+                        agent_context,
                         store_error,
                         sizeof(store_error));
                 } else {
-                    if (!morph_agent_session_read_provider_log(
-                            &agent_session,
+                    if (!agent_api->read_provider_log(
+                            agent_context,
                             module_error,
                             sizeof(module_error))) {
                         snprintf(module_error, sizeof(module_error), "External coding agent exited unsuccessfully");
@@ -1177,15 +1315,17 @@ int main(int argc, char **argv)
                     preview_restore_state = NULL;
                     preview_restore_state_size = 0;
                     if (revision_store_ready) {
-                        (void)morph_revision_store_refresh_session(
-                            &revisions,
+                        (void)revisions_api->refresh_session(
+                            revisions_context,
                             store_error,
                             sizeof(store_error));
                     }
-                    if (agent_session.status == MORPH_AGENT_PROVIDER_SUCCEEDED &&
-                        agent_session.attempt < MORPH_AGENT_MAX_ATTEMPTS &&
-                        morph_agent_session_start_attempt(
-                            &agent_session,
+                    if (agent_api->status(agent_context) ==
+                            MORPHEUS_AUTHORING_AGENT_PROVIDER_SUCCEEDED &&
+                        agent_api->attempt(agent_context) <
+                            MORPHEUS_AUTHORING_AGENT_MAX_ATTEMPTS &&
+                        agent_api->start_attempt(
+                            agent_context,
                             module_error,
                             store_error,
                             sizeof(store_error))) {
@@ -1193,17 +1333,21 @@ int main(int argc, char **argv)
                             agent_status,
                             sizeof(agent_status),
                             "Diagnostics returned; repair attempt %u of %d running",
-                            agent_session.attempt,
-                            MORPH_AGENT_MAX_ATTEMPTS);
+                            agent_api->attempt(agent_context),
+                            MORPHEUS_AUTHORING_AGENT_MAX_ATTEMPTS);
                         module_error[0] = '\0';
                     } else {
-                        (void)morph_agent_session_record_outcome(
-                            &agent_session,
+                        (void)agent_api->record_outcome(
+                            agent_context,
                             "failed",
-                            revisions.active_revision,
+                            revisions_api->active_revision(revisions_context),
                             store_error,
                             sizeof(store_error));
-                        snprintf(agent_status, sizeof(agent_status), "Agent run failed after %u attempt(s)", agent_session.attempt);
+                        snprintf(
+                            agent_status,
+                            sizeof(agent_status),
+                            "Agent run failed after %u attempt(s)",
+                            agent_api->attempt(agent_context));
                     }
                 }
             }
@@ -1211,15 +1355,16 @@ int main(int argc, char **argv)
     }
 
     exit_code = EXIT_SUCCESS;
-    morph_runtime_module_destroy(&module, &host);
+    modules_api->destroy(modules_context, &host);
     morph_image_service_destroy(image_service);
     morph_http_service_destroy(http_service);
     http_service = NULL;
-    morph_agent_session_cancel(&agent_session);
+    agent_api->cancel(agent_context);
+    export_api->cancel(export_context);
     free(preview_restore_state);
     if (revision_store_ready &&
-        !morph_revision_store_end_session(
-            &revisions,
+        !revisions_api->end_session(
+            revisions_context,
             store_error,
             sizeof(store_error))) {
         SDL_Log("Unable to close revision session: %s", store_error);

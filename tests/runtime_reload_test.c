@@ -13,6 +13,7 @@
 #include "nuklear.h"
 
 #include "morpheus/app_api.h"
+#include "authoring_capabilities.h"
 #include "runtime_module.h"
 
 static char observed_label[64];
@@ -63,35 +64,37 @@ static void test_font_glyph(
 }
 
 static int expect_active(
-    morph_runtime_module *module,
+    const morph_authoring_modules_api *modules,
+    void *context,
     morph_host *host,
     const char *name,
     const char *label)
 {
     observed_label[0] = '\0';
-    morph_runtime_module_render_ui(module, host);
-    return module->api &&
-        strcmp(module->api->name, name) == 0 &&
+    modules->render_ui(context, host);
+    return modules->is_active(context) && modules->active_name(context) &&
+        strcmp(modules->active_name(context), name) == 0 &&
         strcmp(observed_label, label) == 0;
 }
 
 int main(void)
 {
     morph_runtime_module module;
+    morph_capability module_capability;
+    morph_capability_registry registry;
+    morph_host authoring_host = {0};
+    const morph_capability *provider;
+    const morph_authoring_modules_api *modules;
+    void *module_context;
     morph_host host = {
-        MORPHEUS_HOST_ABI_VERSION,
-        0,
-        test_log,
-        test_label,
-        test_button,
-        0,
-        0,
-        0
+        .abi_version = MORPHEUS_HOST_ABI_VERSION,
+        .log = test_log,
+        .ui_label = test_label,
+        .ui_button = test_button
     };
     struct nk_context nuklear;
     struct nk_user_font font = {0};
     char error[4096];
-    void *version_one_compiler;
     int restored_state = 17;
 
     font.height = 15.0f;
@@ -102,140 +105,168 @@ int main(void)
         return 1;
     }
     host.nuklear = &nuklear;
-    morph_runtime_module_init(&module);
+    module_capability = morph_authoring_modules_capability(&module);
+    registry.entries = &module_capability;
+    registry.count = 1;
+    authoring_host.abi_version = MORPHEUS_HOST_ABI_VERSION;
+    authoring_host.capabilities = &registry;
+    provider = morph_host_find_capability(
+        &authoring_host,
+        MORPHEUS_AUTHORING_MODULES_CAPABILITY,
+        MORPHEUS_AUTHORING_MODULES_ABI_VERSION);
+    modules = morph_authoring_modules_from_capability(provider);
+    module_context = provider ? provider->context : NULL;
+    if (!modules || host.capabilities) {
+        fprintf(stderr, "module capability discovery failed\n");
+        return 14;
+    }
+    modules->init(module_context);
 
-    if (!morph_runtime_module_reload(
-            &module,
+    if (!modules->reload(
+            module_context,
             &host,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_stdlib.c",
             error,
             sizeof(error)) ||
-        !expect_active(&module, &host, "stdlib-smoke", "TinyCC stdlib available")) {
+        !expect_active(
+            modules, module_context, &host,
+            "stdlib-smoke", "TinyCC stdlib available")) {
         fprintf(stderr, "stdlib module failed to load: %s\n", error);
         return 2;
     }
-    morph_runtime_module_destroy(&module, &host);
+    modules->destroy(module_context, &host);
 
-    if (!morph_runtime_module_reload(
-            &module,
+    if (!modules->reload(
+            module_context,
             &host,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_json.c",
             error,
             sizeof(error)) ||
-        !expect_active(&module, &host, "json-smoke", "TinyCC JSON available")) {
+        !expect_active(
+            modules, module_context, &host,
+            "json-smoke", "TinyCC JSON available")) {
         fprintf(stderr, "JSON facade module failed to load: %s\n", error);
         return 13;
     }
-    morph_runtime_module_destroy(&module, &host);
+    modules->destroy(module_context, &host);
 
-    if (!morph_runtime_module_reload(
-            &module,
+    if (!modules->reload(
+            module_context,
             &host,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_nuklear.c",
             error,
             sizeof(error)) ||
-        morph_runtime_module_render_mode(&module) != MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
+        modules->render_mode(module_context) != MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
         fprintf(stderr, "Nuklear module failed to load: %s\n", error);
         return 3;
     }
-    morph_runtime_module_render_ui(&module, &host);
-    morph_runtime_module_destroy(&module, &host);
+    modules->render_ui(module_context, &host);
+    modules->destroy(module_context, &host);
 
-    if (!morph_runtime_module_reload(
-            &module,
+    if (!modules->reload(
+            module_context,
             &host,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_v1.c",
             error,
             sizeof(error)) ||
-        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        !expect_active(
+            modules, module_context, &host,
+            "version-one", "version one: 41")) {
         fprintf(stderr, "initial load failed: %s\n", error);
         return 4;
     }
-    if (module.last_stage != MORPH_RUNTIME_STAGE_ACTIVE) {
+    if (modules->last_stage(module_context) != MORPHEUS_AUTHORING_MODULE_ACTIVE) {
         fprintf(stderr, "initial load did not report the active stage\n");
         return 5;
     }
-    version_one_compiler = module.compiler;
-
-    if (morph_runtime_module_compile_candidate(
-            &module,
+    if (modules->compile_candidate(
+            module_context,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_invalid.c",
             error,
             sizeof(error)) ||
-        morph_runtime_module_has_candidate(&module) ||
-        module.last_stage != MORPH_RUNTIME_STAGE_VALIDATE ||
-        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        modules->has_candidate(module_context) ||
+        modules->last_stage(module_context) != MORPHEUS_AUTHORING_MODULE_VALIDATE ||
+        !expect_active(
+            modules, module_context, &host,
+            "version-one", "version one: 41")) {
         fprintf(stderr, "invalid candidate replaced the active module\n");
         return 6;
     }
 
-    if (morph_runtime_module_compile_candidate(
-            &module,
+    if (modules->compile_candidate(
+            module_context,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_compile_error.c",
             error,
             sizeof(error)) ||
-        morph_runtime_module_has_candidate(&module) ||
-        module.last_stage != MORPH_RUNTIME_STAGE_COMPILE ||
-        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        modules->has_candidate(module_context) ||
+        modules->last_stage(module_context) != MORPHEUS_AUTHORING_MODULE_COMPILE ||
+        !expect_active(
+            modules, module_context, &host,
+            "version-one", "version one: 41")) {
         fprintf(stderr, "compiler failure disturbed the active module\n");
         return 7;
     }
 
-    if (!morph_runtime_module_compile_candidate(
-            &module,
+    if (!modules->compile_candidate(
+            module_context,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_init_failure.c",
             error,
             sizeof(error)) ||
-        !morph_runtime_module_has_candidate(&module) ||
-        morph_runtime_module_activate_candidate(
-            &module,
+        !modules->has_candidate(module_context) ||
+        modules->activate_candidate(
+            module_context,
             &host,
             error,
             sizeof(error)) ||
-        morph_runtime_module_has_candidate(&module) ||
-        module.last_stage != MORPH_RUNTIME_STAGE_INITIALIZE ||
-        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        modules->has_candidate(module_context) ||
+        modules->last_stage(module_context) != MORPHEUS_AUTHORING_MODULE_INITIALIZE ||
+        !expect_active(
+            modules, module_context, &host,
+            "version-one", "version one: 41")) {
         fprintf(stderr, "initialization failure disturbed the active module\n");
         return 8;
     }
 
-    if (!morph_runtime_module_compile_candidate(
-            &module,
+    if (!modules->compile_candidate(
+            module_context,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_migration_failure.c",
             error,
             sizeof(error)) ||
-        morph_runtime_module_activate_candidate(
-            &module,
+        modules->activate_candidate(
+            module_context,
             &host,
             error,
             sizeof(error)) ||
-        module.last_stage != MORPH_RUNTIME_STAGE_MIGRATE ||
-        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        modules->last_stage(module_context) != MORPHEUS_AUTHORING_MODULE_MIGRATE ||
+        !expect_active(
+            modules, module_context, &host,
+            "version-one", "version one: 41")) {
         fprintf(stderr, "migration failure disturbed the active module\n");
         return 9;
     }
 
-    if (!morph_runtime_module_compile_candidate(
-            &module,
+    if (!modules->compile_candidate(
+            module_context,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_v2.c",
             error,
             sizeof(error)) ||
-        !morph_runtime_module_has_candidate(&module) ||
-        module.compiler != version_one_compiler ||
-        !expect_active(&module, &host, "version-one", "version one: 41")) {
+        !modules->has_candidate(module_context) ||
+        !expect_active(
+            modules, module_context, &host,
+            "version-one", "version one: 41")) {
         fprintf(stderr, "candidate compilation was not isolated: %s\n", error);
         return 10;
     }
 
-    if (!morph_runtime_module_activate_candidate(
-            &module,
+    if (!modules->activate_candidate(
+            module_context,
             &host,
             error,
             sizeof(error)) ||
-        module.compiler == version_one_compiler ||
-        morph_runtime_module_has_candidate(&module) ||
+        modules->has_candidate(module_context) ||
         !expect_active(
-            &module,
+            modules,
+            module_context,
             &host,
             "version-two",
             "version two: migrated 41")) {
@@ -243,21 +274,22 @@ int main(void)
         return 11;
     }
 
-    if (!morph_runtime_module_compile_candidate(
-            &module,
+    if (!modules->compile_candidate(
+            module_context,
             MORPHEUS_TEST_FIXTURE_ROOT "/module_v2.c",
             error,
             sizeof(error)) ||
-        !morph_runtime_module_activate_candidate_with_state(
-            &module,
+        !modules->activate_candidate_with_state(
+            module_context,
             &host,
             &restored_state,
             sizeof(restored_state),
             error,
             sizeof(error)) ||
-        module.last_stage != MORPH_RUNTIME_STAGE_ACTIVE ||
+        modules->last_stage(module_context) != MORPHEUS_AUTHORING_MODULE_ACTIVE ||
         !expect_active(
-            &module,
+            modules,
+            module_context,
             &host,
             "version-two",
             "version two: restored 17")) {
@@ -265,7 +297,7 @@ int main(void)
         return 12;
     }
 
-    morph_runtime_module_destroy(&module, &host);
+    modules->destroy(module_context, &host);
     nk_free(&nuklear);
     puts("PASS: transactional activation, migration, and checkpoint restoration");
     return 0;

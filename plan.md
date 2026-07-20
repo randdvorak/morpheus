@@ -66,6 +66,57 @@ flowchart LR
     Freeze --> Executable["Standalone application"]
 ```
 
+## Runtime Separation and Self-Hosting Architecture
+
+Morpheus must treat its authoring interface as an application built on the same
+runtime and application ABI used by the client applications it creates. The
+runtime is therefore not an implementation detail of the Morpheus UI, and the
+authoring UI must not call compiler, agent, project, revision, or export
+implementations directly.
+
+The intended dependency direction is:
+
+```mermaid
+flowchart TD
+    Kernel["Stable native runtime kernel"] --> Base["Base capabilities"]
+    Kernel --> Authoring["Optional authoring capability providers"]
+    Kernel --> Loader["Application ABI and module loader"]
+    Loader --> Client["Generated client application"]
+    Loader --> MorpheusUI["Morpheus authoring application"]
+    MorpheusUI --> Base
+    MorpheusUI --> Authoring
+```
+
+The stable kernel owns process-level resources, ABI validation, capability
+discovery, transactional activation, and recovery. The Morpheus authoring UI is
+a `morph_app_api` module and consumes versioned optional capabilities for:
+
+- TinyCC compilation and hot reload
+- Coding-agent sessions
+- Project and revision management
+- Preview, acceptance, rollback, and export
+
+Ordinary frozen applications link the base runtime and only their declared
+capabilities. They do not link authoring providers. The Morpheus application
+links the same base runtime plus authoring providers, allowing its UI and
+application behavior to pass through the same candidate, preview, accept, and
+rollback workflow used for client applications.
+
+Self-authoring must not make the development environment unrecoverable. A small
+known-good bootstrap and recovery interface remains ahead-of-time compiled and
+outside the replaceable authoring module. Startup uses the last accepted
+authoring revision, detects crash loops, rolls back transactionally, and offers
+a safe mode that does not load the latest candidate. Initially, self-authoring
+covers the Morpheus UI and application behavior; changes to the trusted kernel
+continue to use the conventional build pipeline until a separately secured
+kernel-update design exists.
+
+The core dependency rule is:
+
+> The runtime and capability providers never depend on the Morpheus UI. The
+> Morpheus UI depends only on the public application ABI and capabilities it
+> discovers at runtime.
+
 ## Host Kernel Responsibilities
 
 The immutable host kernel owns:
@@ -551,7 +602,125 @@ self-contained standalone bundle that behaves like its accepted Morpheus
 preview, persists its own user state, launches without the Morpheus checkout or
 development tools, and passes macOS distribution validation.
 
-## Immediate Next Step
+## Runtime Extraction and Self-Hosting Execution Plan
+
+The migration must remain buildable and preserve the working frozen-export path
+at every checkpoint:
+
+1. **Establish a baseline.** Record the current test results, authoring and
+   frozen-export behavior, binary dependencies, bundle contents, persistence,
+   source-path scans, and binary size. Define authoring symbols and dependencies
+   that are forbidden in ordinary standalone applications.
+2. **Extract the runtime core.** Create a `morpheus_runtime_core` static target
+   for shared HTTP, JSON, image, lifecycle, ABI-validation, and persistence
+   facilities. Relink the current authoring and frozen executables without
+   changing their behavior.
+3. **Extract the standalone runner.** Move the SDL/Nuklear/Metal event loop,
+   host-context setup, persistence, and application lifecycle from
+   `src/export/main.m` behind a small `morph_runtime_run` interface. Keep the
+   Nuklear implementation in a separate translation unit so the standalone
+   runner cannot collide with the authoring shell's renderer.
+4. **Reduce the frozen launcher.** Make `src/export/main.m` a minimal adapter
+   that supplies `morph_app_entry`, render mode, and bundle metadata. Compile
+   generated `app.c` separately and link only the runtime and capabilities
+   selected for the export.
+5. **Add capability discovery.** Define versioned tables for compiler/hot
+   reload, agents, projects, revisions, and export. Applications must detect
+   optional capabilities, and the base runtime must not acquire dependencies on
+   their providers.
+6. **Convert the Morpheus UI into an app module.** Extract the current builder
+   interface from `src/host/main.m` into a `morph_app_api` implementation that
+   accesses authoring functions only through capability tables.
+7. **Create the authoring shell.** Link the base runtime with authoring
+   capability providers and load the Morpheus UI first from a known-good AOT
+   bootstrap, then through the normal candidate/accept/rollback path.
+8. **Add self-hosting recovery.** Preserve an immutable recovery UI, an accepted
+   authoring checkpoint, transactional activation, crash-loop rollback, and a
+   safe-mode launch path.
+9. **Prove isolation and self-hosting.** Add tests for a standalone fixture with
+   no authoring symbols, the authoring module operating only through capability
+   tables, authoring-UI reload and rollback, persistence, export, and scans for
+   build paths or forbidden dependencies.
+10. **Complete the migration.** Update export tooling and documentation, run the
+    full test suite and clean relocated exports, and compare size, contents, and
+    linked dependencies with the baseline.
+
+### Current Baseline
+
+Before runtime extraction, the existing build passes 11 tests, skips the Metal
+image-service test when no device is available, and has one environment-related
+HTTP test failure when the loopback server cannot bind in the execution sandbox.
+The development executable contains expected TinyCC and source-tree paths; the
+frozen-export verification remains responsible for proving those do not appear
+in exported applications.
+
+### Runtime Separation Progress (2026-07-20)
+
+- Steps 1 through 4 are implemented. `morpheus_runtime_core` builds HTTP, JSON,
+  and image services as `libmorpheus_runtime_core.a`, and both production
+  executables link that target instead of compiling private copies.
+- The standalone SDL/Nuklear/Metal lifecycle and persistence implementation is
+  isolated in `libmorpheus_standalone_runtime.a` behind
+  `morph_runtime_run`. The frozen `src/export/main.m` is now only a metadata and
+  generated-entry-point adapter.
+- Runtime validation and capability-registry tests cover rejection before SDL
+  startup and optional capability selection. Service tests link the runtime
+  archive directly.
+- A clean frozen export linked through both archives is ad-hoc signed, contains
+  no source-checkout paths or authoring symbols, and dynamically links only
+  operating-system libraries and frameworks.
+- Step 5 is in progress with a generic, versioned capability registry. The
+  additive registry field advances the host ABI to version 4 while leaving the
+  generated application ABI at version 3. Export manifests derive both values
+  from the public header so they cannot silently drift.
+- Development-only project, revision, agent, and compiler implementations now
+  build into `libmorpheus_authoring.a`. The normal Morpheus executable links
+  this archive; the frozen target cannot acquire it through the base runtime.
+- The first public authoring tables provide versioned project and revision
+  services. `dev.morpheus.authoring.projects` covers enumeration, creation,
+  selection, and path discovery. `dev.morpheus.authoring.revisions` covers
+  initialization, checkpoint/load, history, active-revision selection, attempt
+  logging, state ownership, and crash-session recovery.
+- The current native Morpheus project picker and all revision workflows use
+  these tables rather than calling their stores directly. This includes startup
+  recovery, initial checkpointing, project switching, agent preview acceptance
+  and rejection, manual reload, rollback, and clean shutdown. Generated
+  client-preview modules receive a base host without privileged authoring
+  capabilities.
+- `dev.morpheus.authoring.modules` now owns the complete TinyCC module
+  lifecycle: compilation, transactional activation, explicit-state restore,
+  state capture, stage diagnostics, generated update/render callbacks, and
+  teardown. `dev.morpheus.authoring.agent` owns provider configuration,
+  attempts, polling, candidate paths, build/patch artifacts, acceptance,
+  rollback, outcome recording, and cancellation. The native builder uses both
+  tables without accessing their private structs or implementation functions.
+- `dev.morpheus.authoring.export` wraps the frozen-export pipeline in a
+  non-blocking start/poll/cancel lifecycle, passes application metadata without
+  shell interpolation, preserves the selected output path, and captures a
+  readable build log. The authoring shell registers it alongside the project,
+  revision, module, and agent providers.
+- The transactional reload and external-agent protocol tests now discover and
+  exercise these public capabilities. Their generated-app execution host has no
+  authoring registry, matching the privilege boundary used by Morpheus preview.
+- Capability tests exercise discovery, ABI rejection, project creation and
+  selection, project path lookup, revision history, checkpoint state ownership,
+  attempt logging, and crash recovery. The broader local suite now passes all
+  17 runnable tests; image-service initialization skips without a Metal device
+  and the loopback HTTP test remains excluded in the execution sandbox.
+- SQLite's external build no longer relies on the sandbox-incompatible system
+  Tcl process launcher. CMake first builds SQLite's bundled `jimsh0`, uses it to
+  configure SQLite with Tcl disabled, and stores ExternalProject stamps beside
+  the purgeable staging artifacts so stale stamps cannot outlive the build.
+- A rebuilt frozen fixture contains no authoring, project/revision-store, agent,
+  runtime-compiler, libtcc, or TinyCC symbols or strings; it links only system
+  libraries/frameworks and passes strict verification after hardened ad-hoc
+  signing.
+- Step 5 is complete for the current builder workflow. The next slice begins
+  Step 6 by extracting the Morpheus UI state and callbacks as a
+  `morph_app_api` module using only these public tables; provider construction,
+  windowing, rendering, and immutable recovery remain in the authoring shell.
+
+## Implemented Frozen Export Baseline
 
 Build the first frozen-export vertical slice from the current accepted revision:
 
