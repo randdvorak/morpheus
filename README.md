@@ -11,16 +11,20 @@ an accepted application should export as a conventional, relocatable,
 self-contained executable that can run and persist its own state without the
 Morpheus checkout, TinyCC, an agent, or development tools.
 
-Morpheus is currently an early macOS prototype. The implemented host uses SDL3,
-Nuklear, Metal, Objective-C, and C. The architecture is intended to support
-other platforms and Nuklear rendering backends later, but those ports do not
-exist yet.
+Morpheus is currently an early macOS prototype. The native shell uses SDL3,
+Nuklear, Metal, Objective-C, and C, while the builder interface itself is a
+replaceable `morph_app_api` module written in C. The architecture is intended
+to support other platforms and Nuklear rendering backends later, but those
+ports do not exist yet.
 
 ![Morpheus host running a generated Fractal Explorer](docs/images/morpheus-app2.png)
 
 ## What works today
 
-- Native SDL3/Metal host with a Nuklear immediate-mode interface
+- Minimal native SDL3 shell with a replaceable, self-hosted Nuklear builder UI
+- Versioned capability tables separating presentation from authoring providers
+- Metal renderer with three reusable frame slots, growable vertex/index
+  buffers, 32-bit draw indices, and cached texture/scissor bindings
 - In-memory compilation and transactional hot reload through TinyCC
 - ABI validation, state capture/migration, failed-build recovery, and rollback
 - Named application workspaces under `projects/`
@@ -34,6 +38,8 @@ exist yet.
   and an ad-hoc hardened-runtime signature
 - Static third-party linkage in exported apps; only operating-system libraries
   and macOS frameworks remain dynamically linked
+- Generated-module runtime hardening through an explicit libc allowlist and an
+  optional `stb_leakcheck` allocation diagnostic
 
 SQLite and miniz are pinned, built, and tested as host dependencies, but stable
 generated-app persistence and compression facades are not implemented yet.
@@ -57,20 +63,63 @@ never treated as a distributable artifact.
 
 ## Architecture
 
-Morpheus separates a stable native host from a replaceable application module:
+Morpheus now separates the platform shell, authoring presentation, development
+providers, generated client, and frozen runtime:
 
 ```text
-user request -> agent -> candidate.c -> TinyCC -> validation -> live preview
-                                      |                       |
-                                      |                       +-> accept/reject
-                                      +-> Clang frozen build -> standalone .app
+macOS shell (SDL, input, Nuklear context, Metal, recovery)
+  |
+  +-> authoring UI module (`morph_app_api`)
+  |     |
+  |     +-> public controller/projects/revisions/modules/agent/export tables
+  |
+  +-> generated client preview (runtime services only)
+
+user request -> isolated agent -> candidate.c -> TinyCC -> live preview
+                                                   |
+                                                   +-> accept/reject
+accepted app.c ------------------------------------+-> Clang -> frozen .app
 ```
 
-The host owns the event loop, window, Metal renderer, Nuklear context, compiler,
-network operations, images, project history, and recovery. Generated code owns
-application behavior, UI composition, and serializable domain state. It reaches
-host services through versioned `morph_*` facades and opaque handles rather than
-retaining third-party or platform objects.
+The native shell in `src/host/main.m` is the composition root. It owns the event
+loop, window, one Nuklear context and Metal renderer, constructs native services,
+registers development capabilities, and enforces immutable bootstrap and
+recovery policy. It does not implement builder widgets or multi-provider
+workflow logic.
+
+The builder presentation in `src/authoring/morpheus_app.c` compiles into
+`libmorpheus_authoring_ui.a` and implements the same application lifecycle as a
+generated app. It uses only public headers and discovers projects, revisions,
+module compilation, coding-agent, export, and controller services through
+versioned capability tables. The controller executes cross-provider operations
+at frame boundaries. The UI can be compiled with TinyCC, previewed, accepted,
+rolled back, and restored after a clean launch; an ahead-of-time copy remains
+the known-good bootstrap.
+
+Development provider implementations live in `libmorpheus_authoring.a` and do
+not depend on the UI archive. Generated client previews receive a separate base
+host containing HTTP, JSON, image, logging, and rendering access, but no
+authoring capability registry. Frozen exports omit both authoring archives,
+TinyCC, and agent support.
+
+`libmorpheus_runtime_core.a` contains shared HTTP, JSON, and image services.
+`libmorpheus_standalone_runtime.a` owns the standalone SDL/Nuklear/Metal
+lifecycle and persistent-state envelope used by frozen applications. The frozen
+`src/export/main.m` is only a metadata and generated-entry-point adapter.
+
+Generated code owns application behavior, UI composition, and serializable
+domain state. It reaches host services through versioned `morph_*` facades and
+opaque handles rather than retaining platform service objects.
+
+### Rendering boundary
+
+Nuklear remains the portable UI boundary. The CPU builds a command stream and
+`nk_convert` writes packed vertices and 32-bit indices directly into shared
+Metal buffers. The renderer rotates through three frame slots, grows buffers on
+demand up to configured caps, and avoids redundant texture and scissor state
+changes while encoding indexed draws. Generated modules never receive Metal
+objects or command encoders, so another host can retain the same module ABI and
+provide a different Nuklear backend.
 
 Every module exports:
 
@@ -101,12 +150,14 @@ disabled by default and is not compiled into frozen exports.
 ## Repository layout
 
 ```text
-include/morpheus/  Stable generated-module ABI and SDK
-src/host/          macOS host services and main UI
+include/morpheus/  Stable app ABI, runtime SDK, and public authoring tables
+src/host/          macOS composition root, native services, and Metal renderer
+src/runtime/       Shared standalone lifecycle and persistence implementation
+src/authoring/     Replaceable builder UI, controller, providers, and shell
 src/compiler/      TinyCC compilation, validation, and hot reload
 src/agent/         Provider-neutral agent session protocol
 src/project/       Projects, revisions, state, and recovery metadata
-src/export/        Minimal ahead-of-time frozen host
+src/export/        Minimal ahead-of-time frozen entry-point adapter
 tools/             Codex/Ollama adapters and standalone exporter
 tests/             Runtime, service, persistence, and agent tests
 cmake/             Bundle metadata, entitlements, and export manifest
@@ -177,9 +228,13 @@ Run the complete test suite with:
 ctest --test-dir build --output-on-failure
 ```
 
-Some service tests open a loopback HTTP socket. The image test may skip when no
-Metal device is available. To apply and verify the development hardened-runtime
-signature and JIT entitlement:
+The current macOS configuration registers 23 default tests covering capability
+boundaries, authoring UI/provider separation, transactional reload and recovery,
+agent artifact isolation, runtime services, frozen-export isolation, and pinned
+dependencies. Some service tests open a loopback HTTP socket. The image test
+may skip when no Metal device is available. Enabling
+`MORPHEUS_ENABLE_RUNTIME_LEAKCHECK` adds its allocation-accounting test. To apply
+and verify the development hardened-runtime signature and JIT entitlement:
 
 ```sh
 cmake --build build --target morpheus_hardened
@@ -282,10 +337,12 @@ submodule dependencies remain governed by their respective licenses.
 ## Project status and roadmap
 
 This repository is a development prototype, not a production application SDK.
-Important remaining work includes versioned persistence/compression facades,
-isolated preview execution, secret handling, a host-owned llama.cpp service,
-cross-platform hosts/renderers, robust state migrations, export clean-room
-validation, and a complete signing/notarization workflow.
+The host/UI and frozen-runtime separation milestones are complete for the
+current macOS workflow. Important remaining work includes versioned
+persistence/compression facades, process-isolated generated preview execution,
+secret handling, a host-owned llama.cpp service, cross-platform hosts/renderers,
+robust state migrations, broader clean-machine export validation, and a complete
+Developer ID signing/notarization workflow.
 
 The detailed design, milestones, and acceptance criteria live in
 [`plan.md`](plan.md). When README behavior and implementation differ, the code
