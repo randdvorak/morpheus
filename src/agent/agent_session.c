@@ -2,10 +2,12 @@
 
 #include "agent_session.h"
 
+#include <CommonCrypto/CommonDigest.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdio.h>
@@ -17,6 +19,20 @@
 
 extern char **environ;
 
+#define MORPH_AGENT_RESPONSE_MAX_BYTES (256UL * 1024UL)
+#define MORPH_AGENT_LOG_MAX_BYTES (1024UL * 1024UL)
+#define MORPH_AGENT_TREE_MAX_BYTES (32UL * 1024UL * 1024UL)
+#define MORPH_AGENT_TREE_MAX_ENTRIES 4096UL
+#define MORPH_AGENT_TREE_MAX_DEPTH 64U
+
+typedef struct morph_agent_tree_state {
+    const char *root;
+    const char *excluded[3];
+    unsigned long entries;
+    unsigned long long bytes;
+    uid_t owner;
+} morph_agent_tree_state;
+
 static int morph_agent_error(
     char *error,
     unsigned long error_capacity,
@@ -26,6 +42,267 @@ static int morph_agent_error(
         snprintf(error, (size_t)error_capacity, "%s", message);
     }
     return 0;
+}
+
+static int morph_agent_boundary_error(
+    char *error,
+    unsigned long error_capacity,
+    const char *message)
+{
+    char detail[MORPH_AGENT_FAILURE_CAPACITY];
+    snprintf(detail, sizeof(detail), "Agent provider violated artifact boundary: %s", message);
+    return morph_agent_error(error, error_capacity, detail);
+}
+
+static void morph_agent_digest_bytes(
+    CC_SHA256_CTX *digest,
+    const void *data,
+    size_t size)
+{
+    const unsigned char *cursor = data;
+    while (size) {
+        CC_LONG count = size > UINT32_MAX ? UINT32_MAX : (CC_LONG)size;
+        (void)CC_SHA256_Update(digest, cursor, count);
+        cursor += count;
+        size -= count;
+    }
+}
+
+static void morph_agent_digest_u64(CC_SHA256_CTX *digest, uint64_t value)
+{
+    unsigned char encoded[8];
+    unsigned int index;
+    for (index = 0; index < sizeof(encoded); ++index) {
+        encoded[sizeof(encoded) - index - 1] = (unsigned char)(value & 0xffU);
+        value >>= 8;
+    }
+    morph_agent_digest_bytes(digest, encoded, sizeof(encoded));
+}
+
+static int morph_agent_tree_path_excluded(
+    const morph_agent_tree_state *state,
+    const char *path)
+{
+    size_t index;
+    for (index = 0; index < sizeof(state->excluded) / sizeof(state->excluded[0]); ++index) {
+        if (state->excluded[index] && strcmp(state->excluded[index], path) == 0) return 1;
+    }
+    return 0;
+}
+
+static int morph_agent_hash_tree_path(
+    CC_SHA256_CTX *digest,
+    morph_agent_tree_state *state,
+    const char *path,
+    unsigned int depth,
+    char *error,
+    unsigned long error_capacity)
+{
+    struct stat status;
+    const char *relative;
+    unsigned char kind;
+    int excluded;
+
+    if (depth > MORPH_AGENT_TREE_MAX_DEPTH) {
+        return morph_agent_boundary_error(error, error_capacity, "run tree is too deep");
+    }
+    if (lstat(path, &status) != 0) {
+        return morph_agent_boundary_error(error, error_capacity, "run artifact is missing");
+    }
+    if (++state->entries > MORPH_AGENT_TREE_MAX_ENTRIES) {
+        return morph_agent_boundary_error(error, error_capacity, "run tree has too many entries");
+    }
+    if (status.st_uid != state->owner) {
+        return morph_agent_boundary_error(error, error_capacity, "run artifact has foreign ownership");
+    }
+    if (S_ISLNK(status.st_mode)) {
+        return morph_agent_boundary_error(error, error_capacity, "run tree contains a symbolic link");
+    }
+    if (!S_ISDIR(status.st_mode) && !S_ISREG(status.st_mode)) {
+        return morph_agent_boundary_error(error, error_capacity, "run tree contains a special file");
+    }
+    if (S_ISREG(status.st_mode) && status.st_nlink != 1) {
+        return morph_agent_boundary_error(error, error_capacity, "run tree contains a hard-linked file");
+    }
+    if (S_ISREG(status.st_mode)) {
+        if (status.st_size < 0 ||
+            (unsigned long long)status.st_size > MORPH_AGENT_TREE_MAX_BYTES - state->bytes) {
+            return morph_agent_boundary_error(error, error_capacity, "run artifacts are too large");
+        }
+        state->bytes += (unsigned long long)status.st_size;
+    }
+
+    excluded = morph_agent_tree_path_excluded(state, path);
+    relative = path + strlen(state->root);
+    if (!*relative) relative = ".";
+    else if (*relative == '/') ++relative;
+    if (!excluded) {
+        kind = S_ISDIR(status.st_mode) ? (unsigned char)'d' : (unsigned char)'f';
+        morph_agent_digest_bytes(digest, &kind, sizeof(kind));
+        morph_agent_digest_bytes(digest, relative, strlen(relative) + 1);
+        morph_agent_digest_u64(digest, (uint64_t)(status.st_mode & 07777));
+    }
+
+    if (S_ISDIR(status.st_mode)) {
+        struct dirent **entries = NULL;
+        int count = scandir(path, &entries, NULL, alphasort);
+        int index;
+        int succeeded = 1;
+        if (count < 0) {
+            return morph_agent_boundary_error(error, error_capacity, "run directory cannot be inspected");
+        }
+        for (index = 0; index < count; ++index) {
+            char child[MORPH_AGENT_PATH_CAPACITY];
+            const char *name = entries[index]->d_name;
+            int length;
+            if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+                free(entries[index]);
+                continue;
+            }
+            length = snprintf(child, sizeof(child), "%s/%s", path, name);
+            if (length < 0 || (unsigned long)length >= sizeof(child) ||
+                !morph_agent_hash_tree_path(
+                    digest, state, child, depth + 1, error, error_capacity)) {
+                if (length < 0 || (unsigned long)length >= sizeof(child)) {
+                    (void)morph_agent_boundary_error(
+                        error, error_capacity, "run artifact path is too long");
+                }
+                succeeded = 0;
+                free(entries[index]);
+                ++index;
+                break;
+            }
+            free(entries[index]);
+        }
+        while (index < count) free(entries[index++]);
+        free(entries);
+        return succeeded;
+    }
+
+    if (!excluded) {
+        unsigned char buffer[16384];
+        FILE *file = fopen(path, "rb");
+        size_t count;
+        if (!file) {
+            return morph_agent_boundary_error(error, error_capacity, "run artifact cannot be read");
+        }
+        morph_agent_digest_u64(digest, (uint64_t)status.st_size);
+        while ((count = fread(buffer, 1, sizeof(buffer), file)) != 0) {
+            morph_agent_digest_bytes(digest, buffer, count);
+        }
+        {
+            int failed = ferror(file);
+            if (fclose(file) != 0) failed = 1;
+            if (failed) {
+                return morph_agent_boundary_error(
+                    error, error_capacity, "run artifact cannot be hashed");
+            }
+        }
+    }
+    return 1;
+}
+
+static int morph_agent_hash_run_tree(
+    const morph_agent_session *session,
+    unsigned char output[MORPH_AGENT_DIGEST_SIZE],
+    char *error,
+    unsigned long error_capacity)
+{
+    CC_SHA256_CTX digest;
+    morph_agent_tree_state state = {
+        .root = session->run_directory,
+        .excluded = {
+            session->candidate_path,
+            session->response_path,
+            session->provider_log_path
+        },
+        .owner = geteuid()
+    };
+    if (!CC_SHA256_Init(&digest) ||
+        !morph_agent_hash_tree_path(
+            &digest, &state, session->run_directory, 0, error, error_capacity) ||
+        !CC_SHA256_Final(output, &digest)) {
+        if (error && error_capacity && !error[0]) {
+            (void)morph_agent_boundary_error(error, error_capacity, "cannot hash run artifacts");
+        }
+        return 0;
+    }
+    return 1;
+}
+
+static int morph_agent_validate_output(
+    const char *path,
+    unsigned long max_bytes,
+    int required,
+    const char *description,
+    char *error,
+    unsigned long error_capacity)
+{
+    struct stat status;
+    char message[256];
+    if (lstat(path, &status) != 0) {
+        if (!required && errno == ENOENT) return 1;
+        snprintf(message, sizeof(message), "%s is missing", description);
+        return morph_agent_boundary_error(error, error_capacity, message);
+    }
+    if (!S_ISREG(status.st_mode)) {
+        snprintf(message, sizeof(message), "%s is not a regular file", description);
+        return morph_agent_boundary_error(error, error_capacity, message);
+    }
+    if (status.st_uid != geteuid()) {
+        snprintf(message, sizeof(message), "%s has foreign ownership", description);
+        return morph_agent_boundary_error(error, error_capacity, message);
+    }
+    if (status.st_nlink != 1) {
+        snprintf(message, sizeof(message), "%s is hard-linked", description);
+        return morph_agent_boundary_error(error, error_capacity, message);
+    }
+    if (status.st_size < 0 || (unsigned long long)status.st_size > max_bytes) {
+        snprintf(message, sizeof(message), "%s exceeds its size limit", description);
+        return morph_agent_boundary_error(error, error_capacity, message);
+    }
+    return 1;
+}
+
+static int morph_agent_validate_provider_exit(
+    morph_agent_session *session,
+    int require_response,
+    char *error,
+    unsigned long error_capacity)
+{
+    unsigned char digest[MORPH_AGENT_DIGEST_SIZE];
+    if (!session->provider_baseline_valid) {
+        return morph_agent_boundary_error(error, error_capacity, "run baseline is unavailable");
+    }
+    if (!morph_agent_validate_output(
+            session->candidate_path,
+            MORPH_AGENT_CANDIDATE_MAX_BYTES,
+            1,
+            "candidate.c",
+            error,
+            error_capacity) ||
+        !morph_agent_validate_output(
+            session->provider_log_path,
+            MORPH_AGENT_LOG_MAX_BYTES,
+            1,
+            "provider log",
+            error,
+            error_capacity) ||
+        !morph_agent_validate_output(
+            session->response_path,
+            MORPH_AGENT_RESPONSE_MAX_BYTES,
+            require_response,
+            "provider response",
+            error,
+            error_capacity) ||
+        !morph_agent_hash_run_tree(session, digest, error, error_capacity)) {
+        return 0;
+    }
+    if (memcmp(digest, session->provider_baseline, sizeof(digest)) != 0) {
+        return morph_agent_boundary_error(
+            error, error_capacity, "protected or unexpected artifacts changed");
+    }
+    return 1;
 }
 
 static int morph_agent_path(
@@ -339,15 +616,19 @@ int morph_agent_session_start_attempt(
     char attempts[MORPH_AGENT_PATH_CAPACITY];
     char attempt_directory[MORPH_AGENT_PATH_CAPACITY];
     posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
     char *arguments[6];
     int log_descriptor;
     int spawn_result;
+    int attributes_ready = 0;
 
     if (session->status == MORPH_AGENT_RUNNING ||
         session->attempt >= MORPH_AGENT_MAX_ATTEMPTS) {
         return morph_agent_error(error, error_capacity, "Agent attempt cannot be started");
     }
     session->attempt += 1;
+    session->failure_reason[0] = '\0';
+    session->provider_baseline_valid = 0;
     if (!morph_agent_path(attempts, sizeof(attempts), "%s/attempts", session->run_directory, 0) ||
         !morph_agent_mkdir(attempts, error, error_capacity) ||
         !morph_agent_path(
@@ -402,6 +683,22 @@ int morph_agent_session_start_attempt(
     if (log_descriptor < 0) {
         return morph_agent_error(error, error_capacity, strerror(errno));
     }
+    if (!morph_agent_validate_output(
+            session->candidate_path,
+            MORPH_AGENT_CANDIDATE_MAX_BYTES,
+            1,
+            "candidate.c",
+            error,
+            error_capacity) ||
+        !morph_agent_hash_run_tree(
+            session,
+            session->provider_baseline,
+            error,
+            error_capacity)) {
+        close(log_descriptor);
+        return 0;
+    }
+    session->provider_baseline_valid = 1;
     arguments[0] = session->provider_path;
     arguments[1] = session->run_directory;
     arguments[2] = session->prompt_path;
@@ -412,13 +709,29 @@ int morph_agent_session_start_attempt(
     posix_spawn_file_actions_adddup2(&actions, log_descriptor, STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, log_descriptor, STDERR_FILENO);
     posix_spawn_file_actions_addclose(&actions, log_descriptor);
+    if (posix_spawnattr_init(&attributes) == 0) {
+        short flags = POSIX_SPAWN_SETPGROUP;
+        if (posix_spawnattr_setflags(&attributes, flags) == 0 &&
+            posix_spawnattr_setpgroup(&attributes, 0) == 0) {
+            attributes_ready = 1;
+        } else {
+            posix_spawnattr_destroy(&attributes);
+        }
+    }
+    if (!attributes_ready) {
+        posix_spawn_file_actions_destroy(&actions);
+        close(log_descriptor);
+        return morph_agent_error(
+            error, error_capacity, "Unable to isolate agent provider process group");
+    }
     spawn_result = posix_spawn(
         &session->process_id,
         session->provider_path,
         &actions,
-        NULL,
+        &attributes,
         arguments,
         environ);
+    posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     close(log_descriptor);
     if (spawn_result != 0) {
@@ -439,6 +752,8 @@ int morph_agent_session_poll(
     pid_t result;
     char attempt_candidate[MORPH_AGENT_PATH_CAPACITY];
     char attempt_directory[MORPH_AGENT_PATH_CAPACITY];
+    char validation_error[MORPH_AGENT_FAILURE_CAPACITY] = {0};
+    int provider_succeeded;
 
     if (finished) *finished = 0;
     if (session->status != MORPH_AGENT_RUNNING || session->process_id <= 0) {
@@ -452,26 +767,49 @@ int morph_agent_session_poll(
         return morph_agent_error(error, error_capacity, strerror(errno));
     }
     session->process_id = 0;
-    session->status = WIFEXITED(process_status) && WEXITSTATUS(process_status) == 0
-        ? MORPH_AGENT_PROVIDER_SUCCEEDED
-        : MORPH_AGENT_PROVIDER_FAILED;
-    if (morph_agent_path(
+    (void)kill(-result, SIGKILL);
+    provider_succeeded = WIFEXITED(process_status) && WEXITSTATUS(process_status) == 0;
+    session->status = provider_succeeded
+        ? MORPH_AGENT_PROVIDER_SUCCEEDED : MORPH_AGENT_PROVIDER_FAILED;
+    if (!morph_agent_validate_provider_exit(
+            session,
+            provider_succeeded,
+            validation_error,
+            sizeof(validation_error))) {
+        session->status = MORPH_AGENT_PROVIDER_FAILED;
+        snprintf(
+            session->failure_reason,
+            sizeof(session->failure_reason),
+            "%s",
+            validation_error);
+        (void)morph_agent_error(error, error_capacity, validation_error);
+        if (finished) *finished = 1;
+        return 1;
+    }
+    if (!morph_agent_path(
             attempt_directory,
             sizeof(attempt_directory),
             "%s/attempts/%02lu",
             session->run_directory,
-            session->attempt) &&
-        morph_agent_path(
+            session->attempt) ||
+        !morph_agent_path(
             attempt_candidate,
             sizeof(attempt_candidate),
             "%s/candidate.c",
             attempt_directory,
-            0)) {
-        (void)morph_agent_copy(
+            0) ||
+        !morph_agent_copy(
             session->candidate_path,
             attempt_candidate,
-            error,
-            error_capacity);
+            validation_error,
+            sizeof(validation_error))) {
+        session->status = MORPH_AGENT_PROVIDER_FAILED;
+        snprintf(
+            session->failure_reason,
+            sizeof(session->failure_reason),
+            "Unable to retain validated agent candidate: %s",
+            validation_error[0] ? validation_error : "artifact path is too long");
+        (void)morph_agent_error(error, error_capacity, session->failure_reason);
     }
     if (finished) *finished = 1;
     return 1;
@@ -675,6 +1013,10 @@ int morph_agent_session_read_provider_log(
     size_t size;
     if (!output || output_capacity == 0) return 0;
     output[0] = '\0';
+    if (session->failure_reason[0]) {
+        snprintf(output, (size_t)output_capacity, "%s", session->failure_reason);
+        return 1;
+    }
     file = fopen(session->provider_log_path, "rb");
     if (!file) return 0;
     size = fread(output, 1, (size_t)output_capacity - 1, file);
@@ -687,8 +1029,9 @@ void morph_agent_session_cancel(morph_agent_session *session)
 {
     if (session->status == MORPH_AGENT_RUNNING && session->process_id > 0) {
         int status;
-        kill(session->process_id, SIGTERM);
+        kill(-session->process_id, SIGTERM);
         (void)waitpid(session->process_id, &status, 0);
+        (void)kill(-session->process_id, SIGKILL);
     }
     session->process_id = 0;
     if (session->status == MORPH_AGENT_RUNNING) {

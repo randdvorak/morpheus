@@ -16,6 +16,14 @@ exit with status zero when generation succeeds. Morpheus owns compilation,
 activation, preview, acceptance, and rollback; a provider never writes the
 accepted `generated/app.c` directly.
 
+Morpheus records a SHA-256 manifest of the run tree before starting each
+provider attempt. After the provider exits, Morpheus terminates any remaining
+processes in that provider's process group and validates the run tree before it
+copies or compiles the candidate. Only `candidate.c`, the current response, and
+the provider log may change. Protected or unexpected artifacts, symbolic links,
+special files, foreign ownership, hard links, and oversized output cause the
+attempt to fail. Candidate source is limited to 1 MiB.
+
 Each run is retained under the active project's `agent/runs/` directory (or the
 configured legacy workspace) with the original request, source before the
 change, per-attempt diagnostics, provider output, candidate snapshots, build
@@ -28,14 +36,13 @@ the runtime environment variable of the same name.
 
 The default adapter, `tools/morpheus-codex-agent`, uses `codex exec` in
 non-interactive, ephemeral mode with approvals disabled and ambient user
-configuration/rules ignored. Repository discovery is anchored to the
-individual run directory with a local Git repository. An outer macOS sandbox
-denies reads of protected home locations while allowing Codex's authentication
-and bootstrap files. Codex's internal command sandbox is bypassed because macOS
-does not permit that nested sandbox helper to initialize inside the outer
-sandbox. The provider prompt restricts source changes to `candidate.c`, but the
-provider remains trusted development code rather than a complete write-isolation
-boundary. Set `MORPHEUS_CODEX_EXECUTABLE` when the Codex CLI is installed
+configuration/rules ignored. A Codex permission profile grants minimal platform
+reads and makes the individual run directory read-only except for
+`candidate.c`; model-generated commands receive no network access or inherited
+shell environment. Apps, plugins, hooks, web search, browser access, skill
+discovery, and multi-agent tools are disabled for the run. Codex's parent
+process retains access to `CODEX_HOME` for authentication and writes the final
+response. Set `MORPHEUS_CODEX_EXECUTABLE` when the Codex CLI is installed
 somewhere other than the ChatGPT application bundle.
 
 Generated code is always treated as a preview first. A user must explicitly

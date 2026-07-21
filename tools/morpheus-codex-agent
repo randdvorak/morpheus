@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if [ "$#" -ne 4 ]; then
+    echo "usage: morpheus-codex-agent RUN_DIRECTORY PROMPT_PATH DIAGNOSTICS_PATH RESPONSE_PATH" >&2
+    exit 64
+fi
+
 workspace=$1
 prompt_path=$2
 diagnostics_path=$3
@@ -12,24 +17,40 @@ if [ ! -x "$codex_executable" ]; then
     exit 127
 fi
 
-# Anchor Codex repository discovery at this isolated run directory. The outer
-# macOS sandbox prevents agent shell commands from traversing protected user
-# locations while leaving Codex's own ~/.codex bootstrap files available.
-# Codex's internal sandbox is deliberately bypassed because macOS does not
-# permit its sandbox helper to initialize from inside this outer sandbox.
-/usr/bin/git -C "$workspace" init -q
-privacy_profile='(version 1)
-    (allow default)
-    (deny file-read* (regex #"^/Users/[^/]+/(Desktop|Documents|Downloads|Movies|Music|Pictures)(/|$)"))
-    (deny file-read* (regex #"^/Users/[^/]+/Library(/|$)"))'
+if [ ! -d "$workspace" ] || [ ! -f "$prompt_path" ]; then
+    echo "Codex run directory or prompt is unavailable" >&2
+    exit 66
+fi
 
-/bin/cat "$prompt_path" | /usr/bin/sandbox-exec -p "$privacy_profile" "$codex_executable" \
+# Codex itself retains access to CODEX_HOME for authentication, while its
+# model-generated commands receive only the minimal platform files plus this
+# run directory. The run tree is read-only except for candidate.c. Morpheus
+# writes the final response through Codex's parent process and validates every
+# provider artifact after the process exits.
+filesystem_profile='{":minimal"="read",":workspace_roots"={"."="read","candidate.c"="write"}}'
+
+/bin/cat "$prompt_path" | "$codex_executable" \
     --ask-for-approval never \
+    --strict-config \
+    --disable apps \
+    --disable hooks \
+    --disable in_app_browser \
+    --disable multi_agent \
+    --disable plugin_sharing \
+    --disable plugins \
+    --disable remote_plugin \
+    --disable skill_mcp_dependency_install \
+    --disable skill_search \
+    -c 'default_permissions="morpheus-agent"' \
+    -c "permissions.morpheus-agent.filesystem=$filesystem_profile" \
+    -c 'permissions.morpheus-agent.network.enabled=false' \
+    -c 'shell_environment_policy.inherit="none"' \
+    -c 'shell_environment_policy.set={PATH="/usr/bin:/bin:/usr/sbin:/sbin"}' \
+    -c 'web_search="disabled"' \
     exec \
     --ephemeral \
     --ignore-user-config \
     --ignore-rules \
-    --dangerously-bypass-approvals-and-sandbox \
     --skip-git-repo-check \
     --color never \
     -C "$workspace" \

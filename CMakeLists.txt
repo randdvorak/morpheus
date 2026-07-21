@@ -937,6 +937,45 @@ if(BUILD_TESTING)
     add_dependencies(morpheus_agent_session_test morpheus_fake_agent_provider)
     add_test(NAME agent_session COMMAND morpheus_agent_session_test)
 
+    add_executable(morpheus_fake_boundary_agent_provider
+        tests/fixtures/fake_boundary_agent_provider.c
+    )
+    target_compile_options(morpheus_fake_boundary_agent_provider PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+
+    add_executable(morpheus_agent_boundary_test
+        tests/agent_boundary_test.c
+    )
+    target_include_directories(morpheus_agent_boundary_test PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/agent"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
+        "${CMAKE_SOURCE_DIR}/src/compiler"
+        "${CMAKE_SOURCE_DIR}/src/project"
+        "${CMAKE_SOURCE_DIR}/tinycc"
+    )
+    target_compile_definitions(morpheus_agent_boundary_test PRIVATE
+        MORPHEUS_FAKE_BOUNDARY_AGENT_PATH="$<TARGET_FILE:morpheus_fake_boundary_agent_provider>"
+    )
+    target_compile_options(morpheus_agent_boundary_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_agent_boundary_test PRIVATE
+        morpheus_authoring
+    )
+    add_dependencies(
+        morpheus_agent_boundary_test
+        morpheus_fake_boundary_agent_provider
+    )
+    add_test(NAME agent_boundary COMMAND morpheus_agent_boundary_test)
+
     add_executable(morpheus_fake_repair_agent_provider
         tests/fixtures/fake_repair_agent_provider.c
     )

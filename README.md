@@ -225,12 +225,13 @@ be treated as trusted native code. Compilation and ABI validation protect the
 reload lifecycle; they are not a security boundary. Isolated execution of
 untrusted previews is a planned feature.
 
-The macOS Codex adapter runs in a per-request directory and an outer OS sandbox
-denies reads of protected home locations including Photos, iCloud/user Library,
-Desktop, Documents, Downloads, and media folders. Codex's own nested command
-sandbox is disabled because macOS cannot initialize it inside that outer
-sandbox. Provider prompts restrict edits to `candidate.c`, but provider code is
-still part of the trusted development environment.
+The macOS Codex adapter runs in a per-request directory with a Codex permission
+profile that gives model-generated commands minimal platform reads, read access
+to the run directory, and write access only to `candidate.c`. Command network
+access, ambient user configuration and rules, plugins, apps, hooks, web search,
+and inherited shell environment values are disabled. Codex itself retains
+access to its authentication state. Morpheus validates a cryptographic manifest
+of provider artifacts after every attempt before compiling the candidate.
 
 Agent run directories retain prompts, responses, diagnostics, candidates, and
 patches for reproducibility. Do not put API keys or other secrets in prompts or

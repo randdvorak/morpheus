@@ -7,6 +7,9 @@
 #define MORPH_AGENT_REQUEST_CAPACITY 2048
 #define MORPH_AGENT_MODEL_CAPACITY 256
 #define MORPH_AGENT_MAX_ATTEMPTS 3
+#define MORPH_AGENT_CANDIDATE_MAX_BYTES (1024UL * 1024UL)
+#define MORPH_AGENT_FAILURE_CAPACITY 512
+#define MORPH_AGENT_DIGEST_SIZE 32
 
 typedef enum morph_agent_status {
     MORPH_AGENT_IDLE = 0,
@@ -27,10 +30,13 @@ typedef struct morph_agent_session {
     char response_path[MORPH_AGENT_PATH_CAPACITY];
     char provider_log_path[MORPH_AGENT_PATH_CAPACITY];
     char provider_model[MORPH_AGENT_MODEL_CAPACITY];
+    char failure_reason[MORPH_AGENT_FAILURE_CAPACITY];
+    unsigned char provider_baseline[MORPH_AGENT_DIGEST_SIZE];
     unsigned long run_id;
     unsigned int attempt;
     pid_t process_id;
     morph_agent_status status;
+    int provider_baseline_valid;
 } morph_agent_session;
 
 void morph_agent_session_reset(morph_agent_session *session);
