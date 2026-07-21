@@ -23,7 +23,7 @@ _Static_assert(sizeof(nk_draw_index) == 4,
     "Morpheus requires 32-bit Nuklear draw indices");
 
 #define NK_METAL_IMPLEMENTATION
-#include "nuklear_metal.h"
+#include "morpheus_nuklear_metal.h"
 
 #include "morpheus/app_api.h"
 #include "morpheus/runtime.h"
