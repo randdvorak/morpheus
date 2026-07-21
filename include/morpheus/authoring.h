@@ -33,12 +33,105 @@
 #define MORPHEUS_AUTHORING_EXPORT_ABI_VERSION 1u
 #define MORPHEUS_AUTHORING_EXPORT_PATH_CAPACITY 4096
 
+#define MORPHEUS_AUTHORING_CONTROLLER_CAPABILITY \
+    "dev.morpheus.authoring.controller"
+#define MORPHEUS_AUTHORING_CONTROLLER_ABI_VERSION 1u
+#define MORPHEUS_AUTHORING_CONTROLLER_NAME_CAPACITY 128
+#define MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY 512
+#define MORPHEUS_AUTHORING_CONTROLLER_PATH_CAPACITY 4096
+
 typedef enum morph_authoring_export_status {
     MORPHEUS_AUTHORING_EXPORT_IDLE = 0,
     MORPHEUS_AUTHORING_EXPORT_RUNNING,
     MORPHEUS_AUTHORING_EXPORT_SUCCEEDED,
     MORPHEUS_AUTHORING_EXPORT_FAILED
 } morph_authoring_export_status;
+
+typedef struct morph_authoring_project_info {
+    char name[MORPHEUS_AUTHORING_PROJECT_NAME_CAPACITY];
+    char slug[MORPHEUS_AUTHORING_PROJECT_SLUG_CAPACITY];
+} morph_authoring_project_info;
+
+typedef enum morph_authoring_command {
+    MORPHEUS_AUTHORING_COMMAND_NONE = 0,
+    MORPHEUS_AUTHORING_COMMAND_RECOMPILE,
+    MORPHEUS_AUTHORING_COMMAND_ROLLBACK,
+    MORPHEUS_AUTHORING_COMMAND_CREATE_PROJECT,
+    MORPHEUS_AUTHORING_COMMAND_SELECT_PROJECT,
+    MORPHEUS_AUTHORING_COMMAND_TOGGLE_AGENT_PROVIDER,
+    MORPHEUS_AUTHORING_COMMAND_SUBMIT_AGENT,
+    MORPHEUS_AUTHORING_COMMAND_ACCEPT_PREVIEW,
+    MORPHEUS_AUTHORING_COMMAND_REJECT_PREVIEW,
+    MORPHEUS_AUTHORING_COMMAND_START_EXPORT,
+    MORPHEUS_AUTHORING_COMMAND_CANCEL_EXPORT
+} morph_authoring_command;
+
+typedef struct morph_authoring_request {
+    unsigned long struct_size;
+    morph_authoring_command command;
+    unsigned int project_index;
+    char text[MORPHEUS_AUTHORING_AGENT_REQUEST_CAPACITY];
+    char model[MORPHEUS_AUTHORING_AGENT_MODEL_CAPACITY];
+} morph_authoring_request;
+
+typedef struct morph_authoring_snapshot {
+    unsigned long struct_size;
+    int runtime_active;
+    int commands_enabled;
+    int can_recompile;
+    int can_rollback;
+    int command_pending;
+    int projects_enabled;
+    unsigned int project_count;
+    unsigned int active_project_index;
+    morph_authoring_project_info projects[MORPHEUS_AUTHORING_MAX_PROJECTS];
+    int recovered_from_crash;
+    int agent_ready;
+    int agent_running;
+    int agent_preview_active;
+    int agent_provider_is_custom;
+    int agent_uses_ollama;
+    int can_change_project;
+    int can_toggle_agent_provider;
+    int can_submit_agent;
+    int can_accept_preview;
+    int can_reject_preview;
+    int can_start_export;
+    int can_cancel_export;
+    morph_authoring_export_status export_status;
+    unsigned long active_revision;
+    char active_name[MORPHEUS_AUTHORING_CONTROLLER_NAME_CAPACITY];
+    char agent_status[MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY];
+    char export_status_text[MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY];
+    char diagnostics[MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY];
+    char message[MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY];
+} morph_authoring_snapshot;
+
+typedef struct morph_authoring_controller_api {
+    unsigned int abi_version;
+    unsigned long struct_size;
+    int (*snapshot)(void *context, morph_authoring_snapshot *snapshot);
+    int (*dispatch)(
+        void *context,
+        const morph_authoring_request *request,
+        char *error,
+        unsigned long error_capacity);
+} morph_authoring_controller_api;
+
+static inline const morph_authoring_controller_api *
+morph_authoring_controller_from_capability(const morph_capability *capability)
+{
+    const morph_authoring_controller_api *api;
+    if (!capability ||
+        capability->abi_version < MORPHEUS_AUTHORING_CONTROLLER_ABI_VERSION ||
+        capability->api_size < sizeof(morph_authoring_controller_api) ||
+        !capability->api) return NULL;
+    api = (const morph_authoring_controller_api *)capability->api;
+    if (api->abi_version < MORPHEUS_AUTHORING_CONTROLLER_ABI_VERSION ||
+        api->struct_size < sizeof(morph_authoring_controller_api) ||
+        !api->snapshot || !api->dispatch) return NULL;
+    return api;
+}
 
 typedef enum morph_authoring_agent_status {
     MORPHEUS_AUTHORING_AGENT_IDLE = 0,
@@ -56,11 +149,6 @@ typedef enum morph_authoring_module_stage {
     MORPHEUS_AUTHORING_MODULE_MIGRATE,
     MORPHEUS_AUTHORING_MODULE_ACTIVE
 } morph_authoring_module_stage;
-
-typedef struct morph_authoring_project_info {
-    char name[MORPHEUS_AUTHORING_PROJECT_NAME_CAPACITY];
-    char slug[MORPHEUS_AUTHORING_PROJECT_SLUG_CAPACITY];
-} morph_authoring_project_info;
 
 typedef struct morph_authoring_projects_api {
     unsigned int abi_version;

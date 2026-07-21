@@ -152,6 +152,15 @@ build/Morpheus.app/Contents/MacOS/Morpheus
 Provider configuration and protocol details are documented in
 [`docs/agent-provider-protocol.md`](docs/agent-provider-protocol.md).
 
+Morpheus boots its own builder UI from a known-good AOT module. The recovery
+controls can compile the checked-out authoring source as a live preview, accept
+it durably, or return to the bootstrap. Accepted authoring source is restored on
+the next clean launch. If the previous authoring session exited abnormally,
+Morpheus stays on the bootstrap automatically. Set `MORPHEUS_SAFE_MODE=1` to
+force that recovery path explicitly. See
+[`docs/self-hosting.md`](docs/self-hosting.md) for the lifecycle, trust
+boundary, recovery files, and development overrides.
+
 ## Tests and hardened development build
 
 Run the complete test suite with:

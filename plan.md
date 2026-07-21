@@ -669,7 +669,7 @@ in exported applications.
 - A clean frozen export linked through both archives is ad-hoc signed, contains
   no source-checkout paths or authoring symbols, and dynamically links only
   operating-system libraries and frameworks.
-- Step 5 is in progress with a generic, versioned capability registry. The
+- Step 5 is complete with a generic, versioned capability registry. The
   additive registry field advances the host ABI to version 4 while leaving the
   generated application ABI at version 3. Export manifests derive both values
   from the public header so they cannot silently drift.
@@ -704,9 +704,11 @@ in exported applications.
   authoring registry, matching the privilege boundary used by Morpheus preview.
 - Capability tests exercise discovery, ABI rejection, project creation and
   selection, project path lookup, revision history, checkpoint state ownership,
-  attempt logging, and crash recovery. The broader local suite now passes all
-  17 runnable tests; image-service initialization skips without a Metal device
-  and the loopback HTTP test remains excluded in the execution sandbox.
+  attempt logging, and crash recovery. The broader local suite has 22 tests:
+  20 pass in the execution sandbox, image-service initialization skips without
+  a Metal device, and the loopback HTTP test cannot bind there. All 21 selected
+  tests complete without failure when that known environment-only HTTP case is
+  excluded.
 - SQLite's external build no longer relies on the sandbox-incompatible system
   Tcl process launcher. CMake first builds SQLite's bundled `jimsh0`, uses it to
   configure SQLite with Tcl disabled, and stores ExternalProject stamps beside
@@ -719,6 +721,77 @@ in exported applications.
   Step 6 by extracting the Morpheus UI state and callbacks as a
   `morph_app_api` module using only these public tables; provider construction,
   windowing, rendering, and immutable recovery remain in the authoring shell.
+- Step 6 is complete for the current builder workflow.
+  `libmorpheus_authoring_ui.a` contains
+  a standard `morph_app_api` implementation, compiles with access only to the
+  public include tree, discovers the five granular authoring capabilities plus
+  the authoring controller during
+  `create`, and is driven through create/update/render/save/load/destroy by the
+  native shell. The provider archive has no dependency on the UI archive, the
+  generated client host remains unprivileged, and the UI archive's undefined
+  symbols are limited to Nuklear and ordinary C runtime functions supplied by
+  the host executable.
+- The module owns the complete production builder presentation and its local
+  edit state: runtime and revision status, project selection and creation,
+  coding-agent provider/model/request controls, preview acceptance/rejection,
+  diagnostics, recompile/rollback, and standalone export controls. The
+  versioned `dev.morpheus.authoring.controller` snapshot/request contract
+  composes project, revision, module, agent, and export providers and executes
+  every multi-provider transaction at a frame boundary.
+- `src/host/main.m` no longer contains builder widget state, agent polling and
+  repair logic, project-switch transactions, preview decisions, revision
+  commands, or export lifecycle logic. It constructs providers, boots the
+  known-good AOT authoring module, owns SDL/Nuklear/Metal and base services,
+  renders the generated application, and retains an immutable fallback message
+  if the authoring module cannot load.
+- Step 7 is complete with an explicit AOT authoring shell. Startup installs
+  `morph_authoring_app_entry()` as a known-good static candidate through the
+  same `morph_runtime_module` activation path used by generated code. The
+  runtime loader can now stage either TinyCC or validated static candidates,
+  while preserving identical create, state migration, swap, destruction, and
+  failure-retention behavior.
+- The immutable shell can compile the real `src/authoring/morpheus_app.c` with
+  TinyCC, activate it as a live preview, accept it for the current session,
+  reload it, or transactionally restore the AOT bootstrap with its preserved
+  bootstrap state. Compilation or initialization failure leaves the current
+  authoring UI active. `MORPHEUS_AUTHORING_UI_SOURCE` provides an explicit
+  development override without changing the trusted bootstrap.
+- Authoring-shell tests cover bootstrap rendering, invalid-candidate retention,
+  TinyCC preview, session acceptance, and rollback. The authoring-app integration
+  test also compiles and swaps the production authoring source rather than only
+  a fixture.
+- Step 8 now provides the durable recovery baseline. Accepting an authoring UI
+  preview atomically checkpoints a bounded copy of its source under the user's
+  Morpheus Application Support directory. A subsequent launch always creates
+  the AOT bootstrap first, then compiles and transactionally activates that
+  accepted source only when recovery policy permits it.
+- The shell arms a session marker after bootstrap initialization and removes it
+  only after clean authoring-module destruction. An existing marker on startup
+  is treated as an abnormal authoring exit, suppresses accepted-source loading,
+  and keeps the immutable bootstrap active. `MORPHEUS_SAFE_MODE=1` provides the
+  explicit safe-mode launch path; `MORPHEUS_AUTHORING_STATE_ROOT` isolates the
+  recovery store for tests or advanced development.
+- Recovery tests cover durable acceptance across launches, simulated abnormal
+  exit, automatic bootstrap fallback, explicit safe mode, corrupted accepted
+  source, and authoring candidate initialization failure. Every failure case
+  proves that the bootstrap remains renderable.
+- Step 9 is complete for the current macOS prototype. The authoring app test
+  proves the production module discovers only public capability tables and can
+  be TinyCC-swapped. The authoring-shell test proves reload, acceptance,
+  persistence, failure retention, and recovery. The `frozen_isolation` test
+  audits the AOT binary for authoring/TinyCC symbols and identifiers, source or
+  build paths, non-system dynamic libraries, and signature validity.
+- Step 10 is complete for the runtime-separation migration. Self-hosting and
+  standalone-export documentation now describe the trust boundary, bootstrap,
+  recovery policy, overrides, signing order, and relocated verification. The
+  frozen target signs after copying resources, and its automated test relocates
+  the complete bundle before signature, contents, dependency, path, symbol, and
+  no-window ABI checks.
+- The post-migration reference build is 6,884 KiB for the development bundle
+  versus 2,484 KiB for the frozen bundle. Their executables are 4,891,944 and
+  2,526,176 bytes respectively. The frozen bundle has five files and fifteen
+  dynamic dependencies, all supplied by macOS. These measurements establish a
+  reproducible comparison point for later SDK and local-model work.
 
 ## Implemented Frozen Export Baseline
 

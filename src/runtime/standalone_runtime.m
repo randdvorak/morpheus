@@ -253,6 +253,12 @@ int morph_runtime_run(
         fprintf(stderr, "Exported application render mode is invalid\n");
         return EXIT_FAILURE;
     }
+    {
+        const char *validate_only = getenv("MORPHEUS_RUNTIME_VALIDATE_ONLY");
+        if (validate_only && strcmp(validate_only, "1") == 0) {
+            return EXIT_SUCCESS;
+        }
+    }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) return EXIT_FAILURE;
     window = SDL_CreateWindow(api->name ? api->name : fallback_name,
         initial_width, initial_height,

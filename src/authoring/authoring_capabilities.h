@@ -4,6 +4,7 @@
 #include "morpheus/authoring.h"
 
 typedef struct morph_agent_session morph_agent_session;
+typedef struct morph_authoring_controller morph_authoring_controller;
 typedef struct morph_export_service morph_export_service;
 typedef struct morph_project_store morph_project_store;
 typedef struct morph_revision_store morph_revision_store;
@@ -20,5 +21,7 @@ morph_capability morph_authoring_agent_capability(
 morph_capability morph_authoring_export_capability(
     morph_export_service *service,
     const char *tool_path);
+morph_capability morph_authoring_controller_capability(
+    morph_authoring_controller *controller);
 
 #endif

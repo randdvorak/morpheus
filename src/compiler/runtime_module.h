@@ -25,6 +25,19 @@ typedef struct morph_runtime_module {
 } morph_runtime_module;
 
 void morph_runtime_module_init(morph_runtime_module *module);
+int morph_runtime_module_stage_static_candidate(
+    morph_runtime_module *module,
+    const morph_app_api *api,
+    unsigned int render_mode,
+    char *error,
+    unsigned long error_capacity);
+int morph_runtime_module_bootstrap(
+    morph_runtime_module *module,
+    morph_host *host,
+    const morph_app_api *api,
+    unsigned int render_mode,
+    char *error,
+    unsigned long error_capacity);
 int morph_runtime_module_compile_candidate(
     morph_runtime_module *module,
     const char *source_path,

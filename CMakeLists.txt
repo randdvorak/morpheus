@@ -421,6 +421,17 @@ add_custom_command(TARGET morpheus_frozen POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_BINARY_DIR}/generated/export-manifest.json"
         "$<TARGET_BUNDLE_CONTENT_DIR:morpheus_frozen>/Resources/export-manifest.json"
+    COMMAND "${MORPHEUS_CODESIGN_EXECUTABLE}"
+        --force
+        --deep
+        --sign -
+        --options runtime
+        "$<TARGET_BUNDLE_DIR:morpheus_frozen>"
+    COMMAND "${MORPHEUS_CODESIGN_EXECUTABLE}"
+        --verify
+        --deep
+        --strict
+        "$<TARGET_BUNDLE_DIR:morpheus_frozen>"
     VERBATIM
 )
 else()
@@ -428,11 +439,28 @@ else()
         "Frozen export target disabled; source not found: ${MORPHEUS_FROZEN_SOURCE}")
 endif()
 
-# Development-only implementation. This archive is deliberately absent from
-# the frozen target and will back the optional authoring capability providers
-# consumed by the self-hosted Morpheus UI.
+# The replaceable authoring UI sees only public application and capability
+# headers. It cannot acquire provider implementations through this target.
+add_library(morpheus_authoring_ui STATIC
+    src/authoring/morpheus_app.c
+)
+target_include_directories(morpheus_authoring_ui
+    PUBLIC
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+)
+target_compile_options(morpheus_authoring_ui PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+# Development-only providers. This archive is deliberately absent from the
+# frozen target and never depends on the authoring UI target.
 add_library(morpheus_authoring STATIC
     src/authoring/authoring_capabilities.c
+    src/authoring/authoring_controller.c
+    src/authoring/authoring_shell.c
     src/authoring/export_service.c
     src/agent/agent_session.c
     src/compiler/runtime_module.c
@@ -489,6 +517,7 @@ target_include_directories(morpheus PRIVATE
 
 target_compile_definitions(morpheus PRIVATE
     MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+    MORPHEUS_AUTHORING_UI_SOURCE_PATH="${CMAKE_SOURCE_DIR}/src/authoring/morpheus_app.c"
     MORPHEUS_AGENT_PROVIDER_PATH="${MORPHEUS_AGENT_PROVIDER}"
     MORPHEUS_OLLAMA_PROVIDER_PATH="${CMAKE_SOURCE_DIR}/tools/morpheus-ollama-agent"
 )
@@ -502,6 +531,7 @@ target_compile_options(morpheus PRIVATE
 )
 
 target_link_libraries(morpheus PRIVATE
+    morpheus_authoring_ui
     morpheus_authoring
     morpheus_sqlite
     miniz
@@ -632,6 +662,84 @@ if(BUILD_TESTING)
         NAME authoring_export_capability
         COMMAND morpheus_authoring_export_capability_test)
 
+    add_executable(morpheus_authoring_app_module_test
+        tests/authoring_app_module_test.c
+    )
+    target_include_directories(morpheus_authoring_app_module_test PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/agent"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
+        "${CMAKE_SOURCE_DIR}/src/compiler"
+        "${CMAKE_SOURCE_DIR}/src/project"
+        "${CMAKE_SOURCE_DIR}/tinycc"
+    )
+    target_compile_options(morpheus_authoring_app_module_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_compile_definitions(morpheus_authoring_app_module_test PRIVATE
+        MORPHEUS_TEST_AUTHORING_UI_SOURCE="${CMAKE_SOURCE_DIR}/src/authoring/morpheus_app.c"
+    )
+    target_link_libraries(morpheus_authoring_app_module_test PRIVATE
+        morpheus_authoring_ui
+        morpheus_authoring
+    )
+    set_target_properties(
+        morpheus_authoring_app_module_test PROPERTIES ENABLE_EXPORTS TRUE)
+    add_test(
+        NAME authoring_app_module
+        COMMAND morpheus_authoring_app_module_test)
+
+    add_executable(morpheus_authoring_controller_test
+        tests/authoring_controller_test.c
+    )
+    target_include_directories(morpheus_authoring_controller_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
+    )
+    target_compile_options(morpheus_authoring_controller_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_authoring_controller_test PRIVATE
+        morpheus_authoring
+    )
+    add_test(
+        NAME authoring_controller
+        COMMAND morpheus_authoring_controller_test)
+
+    add_executable(morpheus_authoring_shell_test
+        tests/authoring_shell_test.c
+    )
+    target_include_directories(morpheus_authoring_shell_test PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/authoring"
+        "${CMAKE_SOURCE_DIR}/src/compiler"
+        "${CMAKE_SOURCE_DIR}/tinycc"
+    )
+    target_compile_definitions(morpheus_authoring_shell_test PRIVATE
+        MORPHEUS_TEST_AUTHORING_CANDIDATE="${CMAKE_SOURCE_DIR}/tests/fixtures/module_v1.c"
+        MORPHEUS_TEST_INVALID_AUTHORING_CANDIDATE="${CMAKE_SOURCE_DIR}/tests/fixtures/module_compile_error.c"
+        MORPHEUS_TEST_INIT_FAILURE_AUTHORING_CANDIDATE="${CMAKE_SOURCE_DIR}/tests/fixtures/module_init_failure.c"
+    )
+    target_compile_options(morpheus_authoring_shell_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_authoring_shell_test PRIVATE
+        morpheus_authoring
+    )
+    set_target_properties(morpheus_authoring_shell_test PROPERTIES ENABLE_EXPORTS TRUE)
+    add_test(NAME authoring_shell COMMAND morpheus_authoring_shell_test)
+
     add_executable(morpheus_runtime_validation_test
         tests/runtime_validation_test.c
     )
@@ -644,6 +752,18 @@ if(BUILD_TESTING)
         morpheus_standalone_runtime
     )
     add_test(NAME runtime_validation COMMAND morpheus_runtime_validation_test)
+
+    if(APPLE AND TARGET morpheus_frozen)
+        add_test(
+            NAME frozen_isolation
+            COMMAND /bin/sh
+                "${CMAKE_SOURCE_DIR}/tests/frozen_isolation_test.sh"
+                "$<TARGET_FILE:morpheus_frozen>"
+                "$<TARGET_BUNDLE_DIR:morpheus_frozen>"
+                "${CMAKE_SOURCE_DIR}"
+                "${CMAKE_BINARY_DIR}"
+        )
+    endif()
 
     add_executable(morpheus_runtime_reload_test
         tests/runtime_reload_test.c

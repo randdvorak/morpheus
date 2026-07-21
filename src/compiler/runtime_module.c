@@ -93,6 +93,28 @@ static void morph_discard_pending(morph_runtime_module *module)
     module->pending_render_mode = MORPHEUS_RENDER_EMBEDDED;
 }
 
+int morph_runtime_module_stage_static_candidate(
+    morph_runtime_module *module,
+    const morph_app_api *api,
+    unsigned int render_mode,
+    char *error,
+    unsigned long error_capacity)
+{
+    if (error && error_capacity) error[0] = '\0';
+    if (!module || !api || api->abi_version != MORPHEUS_APP_ABI_VERSION ||
+        !api->render_ui || render_mode > MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
+        if (module) module->last_stage = MORPH_RUNTIME_STAGE_VALIDATE;
+        morph_set_error(error, error_capacity,
+            "Static candidate returned an invalid application ABI");
+        return 0;
+    }
+    morph_discard_pending(module);
+    module->pending_api = api;
+    module->pending_render_mode = render_mode;
+    module->last_stage = MORPH_RUNTIME_STAGE_VALIDATE;
+    return 1;
+}
+
 static void morph_add_nuklear_symbols(TCCState *compiler)
 {
     void *address;
@@ -322,7 +344,7 @@ static int morph_activate_candidate(
     if (error && error_capacity) {
         error[0] = '\0';
     }
-    if (!module->pending_compiler || !module->pending_api) {
+    if (!module->pending_api) {
         return morph_fail(
             module,
             MORPH_RUNTIME_STAGE_VALIDATE,
@@ -444,9 +466,28 @@ int morph_runtime_module_activate_candidate_with_state(
         error_capacity);
 }
 
+int morph_runtime_module_bootstrap(
+    morph_runtime_module *module,
+    morph_host *host,
+    const morph_app_api *api,
+    unsigned int render_mode,
+    char *error,
+    unsigned long error_capacity)
+{
+    if (!module || module->api) {
+        morph_set_error(error, error_capacity,
+            "Runtime module bootstrap requires an empty module");
+        return 0;
+    }
+    return morph_runtime_module_stage_static_candidate(
+            module, api, render_mode, error, error_capacity) &&
+        morph_runtime_module_activate_candidate_with_state(
+            module, host, NULL, 0, error, error_capacity);
+}
+
 int morph_runtime_module_has_candidate(const morph_runtime_module *module)
 {
-    return module->pending_compiler != NULL;
+    return module->pending_api != NULL;
 }
 
 unsigned int morph_runtime_module_render_mode(const morph_runtime_module *module)

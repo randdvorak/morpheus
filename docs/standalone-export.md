@@ -35,6 +35,13 @@ and verifies an ad-hoc hardened-runtime signature. Stripping happens before
 signing so the final signature covers the exact distributed executable.
 Developer ID signing and notarization remain a distribution step.
 
+The build-tree frozen target is also stripped and ad-hoc signed after its
+resources are copied. The `frozen_isolation` test relocates that bundle under a
+temporary directory, verifies its signature and system-only dynamic
+dependencies, rejects checkout/build paths and authoring/TinyCC identifiers,
+checks the bundle allowlist, and runs the relocated executable's ABI validation
+path without creating a window.
+
 At runtime, mutable state is stored atomically under
 `~/Library/Application Support/<bundle-id>/state.bin`, outside the signed
 bundle. Tests can override the parent location with
