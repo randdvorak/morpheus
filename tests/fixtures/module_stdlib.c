@@ -16,7 +16,8 @@ static int create(morph_host *host, void **state)
         free(app);
         return 0;
     }
-    strcpy(app->message, "TinyCC stdlib available");
+    strncpy(app->message, "TinyCC stdlib available", 31);
+    app->message[31] = '\0';
     *state = app;
     return 1;
 }

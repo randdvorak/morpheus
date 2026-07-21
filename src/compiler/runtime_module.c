@@ -6,6 +6,10 @@
 
 #include "libtcc.h"
 
+#ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
+#include "runtime_leakcheck.h"
+#endif
+
 typedef struct morph_error_sink {
     char *buffer;
     unsigned long capacity;
@@ -141,7 +145,6 @@ static void morph_add_nuklear_symbols(TCCState *compiler)
     MORPHEUS_RUNTIME_SYMBOL(strlen)
     MORPHEUS_RUNTIME_SYMBOL(strcmp)
     MORPHEUS_RUNTIME_SYMBOL(strncmp)
-    MORPHEUS_RUNTIME_SYMBOL(strcpy)
     MORPHEUS_RUNTIME_SYMBOL(strncpy)
     MORPHEUS_RUNTIME_SYMBOL(strchr)
     MORPHEUS_RUNTIME_SYMBOL(strrchr)
@@ -189,6 +192,12 @@ static void morph_add_nuklear_symbols(TCCState *compiler)
     MORPHEUS_RUNTIME_SYMBOL(morph_json_builder_set_root)
     MORPHEUS_RUNTIME_SYMBOL(morph_json_serialize)
     MORPHEUS_RUNTIME_SYMBOL(morph_json_buffer_free)
+#ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
+    MORPHEUS_RUNTIME_SYMBOL(morph_runtime_leakcheck_malloc)
+    MORPHEUS_RUNTIME_SYMBOL(morph_runtime_leakcheck_calloc)
+    MORPHEUS_RUNTIME_SYMBOL(morph_runtime_leakcheck_realloc)
+    MORPHEUS_RUNTIME_SYMBOL(morph_runtime_leakcheck_free)
+#endif
 #undef MORPHEUS_RUNTIME_SYMBOL
 }
 
@@ -227,6 +236,9 @@ int morph_runtime_module_compile_candidate(
     tcc_add_include_path(candidate, MORPHEUS_SOURCE_ROOT "/include");
     tcc_add_include_path(candidate, MORPHEUS_SOURCE_ROOT "/Nuklear");
     tcc_add_include_path(candidate, MORPHEUS_TCC_INCLUDE_PATH);
+#ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
+    tcc_define_symbol(candidate, "MORPHEUS_ENABLE_RUNTIME_LEAKCHECK", "1");
+#endif
 
     if (tcc_set_output_type(candidate, TCC_OUTPUT_MEMORY) < 0) {
         tcc_delete(candidate);
@@ -557,5 +569,8 @@ void morph_runtime_module_destroy(
         module->api,
         host,
         module->state);
+#ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
+    (void)morph_runtime_leakcheck_report();
+#endif
     morph_runtime_module_init(module);
 }

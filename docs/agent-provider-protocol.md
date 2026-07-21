@@ -76,8 +76,10 @@ Seed modules also have TinyCC headers and an explicit freestanding C runtime
 subset. Morpheus bridges allocation (`malloc`, `calloc`, `realloc`, `free`),
 memory/string operations, numeric conversion, and `qsort`/`bsearch` into the
 host process while retaining `-nostdlib`. Modules must bound allocations and
-release owned memory from `destroy`; other libc, SDL, OS, filesystem, network,
-and time APIs are unavailable.
+release owned memory from `destroy`. Unbounded destination-writing APIs such as
+`strcpy` are unavailable; use `strncpy` with explicit termination or
+`snprintf`. Other libc, SDL, OS, filesystem, network, and time APIs are
+unavailable.
 
 The first SDK service is asynchronous HTTP through `host->http`. Use
 `morph_http_get` or `morph_http_post_json`, poll with `morph_http_poll` from

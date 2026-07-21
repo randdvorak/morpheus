@@ -16,6 +16,10 @@
 #include "authoring_capabilities.h"
 #include "runtime_module.h"
 
+#ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
+#include "runtime_leakcheck.h"
+#endif
+
 static char observed_label[64];
 
 static void test_log(morph_host *host, const char *message)
@@ -133,6 +137,27 @@ int main(void)
             "stdlib-smoke", "TinyCC stdlib available")) {
         fprintf(stderr, "stdlib module failed to load: %s\n", error);
         return 2;
+    }
+#ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
+    if (morph_runtime_leakcheck_live_allocations() != 2) {
+        fprintf(stderr, "generated allocations bypassed leak tracking\n");
+        return 16;
+    }
+#endif
+
+    if (modules->compile_candidate(
+            module_context,
+            MORPHEUS_TEST_FIXTURE_ROOT "/module_forbidden_stdlib.c",
+            error,
+            sizeof(error)) ||
+        modules->has_candidate(module_context) ||
+        modules->last_stage(module_context) != MORPHEUS_AUTHORING_MODULE_COMPILE ||
+        !strstr(error, "strcpy") ||
+        !expect_active(
+            modules, module_context, &host,
+            "stdlib-smoke", "TinyCC stdlib available")) {
+        fprintf(stderr, "forbidden stdlib symbol was available: %s\n", error);
+        return 15;
     }
     modules->destroy(module_context, &host);
 
@@ -298,6 +323,12 @@ int main(void)
     }
 
     modules->destroy(module_context, &host);
+#ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
+    if (morph_runtime_leakcheck_live_allocations() != 0) {
+        fprintf(stderr, "generated allocations survived module shutdown\n");
+        return 17;
+    }
+#endif
     nk_free(&nuklear);
     puts("PASS: transactional activation, migration, and checkpoint restoration");
     return 0;

@@ -8,6 +8,9 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build third-party libraries statically" FORCE)
+option(MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
+    "Track TinyCC generated-module allocations with stb_leakcheck"
+    OFF)
 
 set(MORPHEUS_FROZEN_SOURCE "${CMAKE_SOURCE_DIR}/generated/app.c"
     CACHE FILEPATH "Accepted generated C source for the frozen export")
@@ -467,6 +470,11 @@ add_library(morpheus_authoring STATIC
     src/project/revision_store.c
     src/project/project_store.c
 )
+if(MORPHEUS_ENABLE_RUNTIME_LEAKCHECK)
+    target_sources(morpheus_authoring PRIVATE
+        src/compiler/runtime_leakcheck.c
+    )
+endif()
 add_dependencies(morpheus_authoring morpheus_tinycc)
 target_include_directories(morpheus_authoring PRIVATE
     "${CMAKE_BINARY_DIR}/generated"
@@ -478,12 +486,22 @@ target_include_directories(morpheus_authoring PRIVATE
     "${CMAKE_SOURCE_DIR}/src/project"
     "${CMAKE_SOURCE_DIR}/tinycc"
 )
+if(MORPHEUS_ENABLE_RUNTIME_LEAKCHECK)
+    target_include_directories(morpheus_authoring PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/stb"
+    )
+endif()
 target_compile_definitions(morpheus_authoring PRIVATE
     MORPHEUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
     MORPHEUS_EXPORT_TOOL_PATH="${CMAKE_SOURCE_DIR}/tools/morpheus-export"
     MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
     MORPHEUS_TCC_INCLUDE_PATH="${MORPHEUS_TCC_SOURCE_DIR}/include"
 )
+if(MORPHEUS_ENABLE_RUNTIME_LEAKCHECK)
+    target_compile_definitions(morpheus_authoring PRIVATE
+        MORPHEUS_ENABLE_RUNTIME_LEAKCHECK=1
+    )
+endif()
 target_compile_options(morpheus_authoring PRIVATE
     -Wall
     -Wextra
@@ -782,6 +800,11 @@ if(BUILD_TESTING)
     target_compile_definitions(morpheus_runtime_reload_test PRIVATE
         MORPHEUS_TEST_FIXTURE_ROOT="${CMAKE_SOURCE_DIR}/tests/fixtures"
     )
+    if(MORPHEUS_ENABLE_RUNTIME_LEAKCHECK)
+        target_compile_definitions(morpheus_runtime_reload_test PRIVATE
+            MORPHEUS_ENABLE_RUNTIME_LEAKCHECK=1
+        )
+    endif()
     target_compile_options(morpheus_runtime_reload_test PRIVATE
         -Wall
         -Wextra
@@ -794,6 +817,24 @@ if(BUILD_TESTING)
     )
     set_target_properties(morpheus_runtime_reload_test PROPERTIES ENABLE_EXPORTS TRUE)
     add_test(NAME runtime_reload COMMAND morpheus_runtime_reload_test)
+
+    if(MORPHEUS_ENABLE_RUNTIME_LEAKCHECK)
+        add_executable(morpheus_runtime_leakcheck_test
+            tests/runtime_leakcheck_test.c
+        )
+        target_include_directories(morpheus_runtime_leakcheck_test PRIVATE
+            "${CMAKE_SOURCE_DIR}/src/compiler"
+        )
+        target_compile_options(morpheus_runtime_leakcheck_test PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+        )
+        target_link_libraries(morpheus_runtime_leakcheck_test PRIVATE
+            morpheus_authoring
+        )
+        add_test(NAME runtime_leakcheck COMMAND morpheus_runtime_leakcheck_test)
+    endif()
 
     add_executable(morpheus_http_service_test tests/http_service_test.c)
     target_include_directories(morpheus_http_service_test PRIVATE

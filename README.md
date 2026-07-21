@@ -16,7 +16,7 @@ Nuklear, Metal, Objective-C, and C. The architecture is intended to support
 other platforms and Nuklear rendering backends later, but those ports do not
 exist yet.
 
-![Morpheus host running a generated FX rate dashboard](docs/images/morpheus-app.png)
+![Morpheus host running a generated Fractal Explorer](docs/images/morpheus-app2.png)
 
 ## What works today
 
@@ -87,8 +87,16 @@ into managing its own Nuklear windows with `MORPHEUS_RENDER_NUKLEAR_WINDOWS`.
 
 Generated modules are compiled as freestanding C with `-nostdlib -Wall
 -Werror`. Morpheus explicitly exposes the enabled Nuklear symbols and a bounded
-libc subset. Modules do not receive direct SDL, Metal, filesystem, or native
-networking access.
+libc subset. Unbounded destination-writing functions such as `strcpy` are not
+available; bounded `strncpy` and `snprintf` remain available. Modules do not
+receive direct SDL, Metal, filesystem, or native networking access.
+
+Development builds can track allocations made directly by TinyCC-generated
+modules with `-DMORPHEUS_ENABLE_RUNTIME_LEAKCHECK=ON`. This optional diagnostic
+uses `stb_leakcheck` and reports surviving allocations when the runtime module
+shuts down. It is intended for the single runtime-callback thread; it does not
+track host-service allocations and is not a general-purpose sanitizer. It is
+disabled by default and is not compiled into frozen exports.
 
 ## Repository layout
 
