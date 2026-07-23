@@ -46,6 +46,9 @@ ports do not exist yet.
 SQLite persistence is available to generated and frozen applications through a
 host-owned capability; miniz is pinned and tested, but its generated-app
 compression facade is not implemented yet.
+The MIT-licensed `la` header and Morpheus's checked dynamic numerical algorithms
+build as a host-private math library; generated-module boundaries are planned in
+[`docs/math-sdk.md`](docs/math-sdk.md).
 The llama.cpp submodule is also pinned for the planned local model service but
 is not part of the current host executable.
 
@@ -164,6 +167,13 @@ uses `stb_leakcheck` and reports surviving allocations when the runtime module
 shuts down. It is intended for the single runtime-callback thread; it does not
 track host-service allocations and is not a general-purpose sanitizer. It is
 disabled by default and is not compiled into frozen exports.
+
+Math is currently a host implementation dependency, not a generated-module API.
+`libmorpheus_math.a` combines the vendored allocation-free 2D/3D/4D vector and
+square-matrix implementation with Morpheus-owned dynamic vectors, matrices,
+Householder QR solving, regression, and symmetric eigen decomposition. Its
+proposed stable, namespaced generated-module boundaries are documented in
+[`docs/math-sdk.md`](docs/math-sdk.md).
 
 ## Repository layout
 

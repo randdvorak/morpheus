@@ -154,7 +154,14 @@ Planned capability tiers:
    prepared statements, transactions, and migration helpers.
 4. **Compression and assets:** zlib/miniz for cache and bundle compression, plus
    image loading helpers that produce host-managed Nuklear-compatible assets.
-5. **Utility layer:** configuration parsing, UUIDs, hashing, bounded buffers,
+5. **Fixed-size math:** a namespaced SDK for 2D/3D/4D vectors and square
+   matrices. The allocation-free, MIT-licensed `la` implementation is available
+   to the host; generated-code exposure waits on a Morpheus-owned ABI and
+   Clang/TinyCC convention tests. Morpheus-owned dynamic matrices, Householder
+   QR solving, regression, and symmetric eigen decomposition are also available
+   behind the host interface; their generated-code boundary remains a separate
+   future numerical capability.
+6. **Utility layer:** configuration parsing, UUIDs, hashing, bounded buffers,
    regular expressions, and background jobs as demand proves out.
 
 Initial implementation milestones:

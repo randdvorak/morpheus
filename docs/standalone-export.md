@@ -54,7 +54,9 @@ statement, typed binding/column, transaction, and atomic migration operations;
 it never receives the database path or a raw SQLite handle.
 
 The frozen profile exposes HTTP, JSON, image, and database capabilities. It
-links SDL, Nuklear, SQLite, yyjson, and stb into the executable and dynamically
-links only macOS system libraries and frameworks. It honors the same optional
+uses SDL, Nuklear, SQLite, yyjson, stb, and the host-private math archive as
+static build inputs and dynamically links only macOS system libraries and
+frameworks. Math and dynamic numerical algorithms are not yet exposed to
+generated modules. The runtime honors the same optional
 `morph_app_render_mode` export as the development host, so full-window Nuklear
 applications are not placed inside an extra host-owned window after export.

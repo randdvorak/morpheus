@@ -272,6 +272,29 @@ set(BUILD_HEADER_ONLY OFF CACHE BOOL "Build miniz header-only" FORCE)
 add_subdirectory(third_party/miniz EXCLUDE_FROM_ALL)
 target_compile_options(miniz PRIVATE -Wno-unused-function)
 
+# Compile fixed-size la and Morpheus's checked dynamic numeric layer into one
+# host-private archive. Generated modules receive neither this target nor its
+# vendor types; public math/numeric boundaries are defined separately.
+add_library(morpheus_math STATIC
+    src/host/la_impl.c
+    src/host/numeric.c
+)
+target_include_directories(morpheus_math PUBLIC
+    "${CMAKE_SOURCE_DIR}/third_party/la"
+    "${CMAKE_SOURCE_DIR}/src/host"
+)
+target_compile_options(morpheus_math PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -ffunction-sections
+    -fdata-sections
+)
+set_target_properties(morpheus_math PROPERTIES C_VISIBILITY_PRESET hidden)
+if(UNIX)
+    target_link_libraries(morpheus_math PUBLIC m)
+endif()
+
 add_library(morpheus_stb_image STATIC src/host/stb_image_impl.c)
 target_include_directories(morpheus_stb_image PRIVATE
     "${CMAKE_SOURCE_DIR}/third_party/stb"
@@ -308,6 +331,7 @@ target_compile_options(morpheus_runtime_core PRIVATE
     $<$<COMPILE_LANGUAGE:OBJC>:-Wno-c23-extensions>
 )
 target_link_libraries(morpheus_runtime_core PRIVATE
+    morpheus_math
     morpheus_sqlite
     yyjson
     morpheus_stb_image
@@ -367,7 +391,8 @@ target_link_libraries(morpheus_standalone_runtime PRIVATE
 if(EXISTS "${MORPHEUS_FROZEN_SOURCE}")
 file(SHA256 "${MORPHEUS_FROZEN_SOURCE}" MORPHEUS_FROZEN_SOURCE_SHA256)
 foreach(MORPHEUS_EXPORT_DEPENDENCY
-        SDL Nuklear third_party/sqlite third_party/yyjson third_party/stb)
+        SDL Nuklear third_party/sqlite third_party/yyjson third_party/stb
+        third_party/la)
     string(REPLACE "/" "_" MORPHEUS_EXPORT_DEPENDENCY_KEY "${MORPHEUS_EXPORT_DEPENDENCY}")
     string(TOUPPER "${MORPHEUS_EXPORT_DEPENDENCY_KEY}" MORPHEUS_EXPORT_DEPENDENCY_KEY)
     execute_process(
@@ -948,6 +973,36 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_sqlite_test PRIVATE morpheus_sqlite)
     add_test(NAME sqlite COMMAND morpheus_sqlite_test)
+
+    add_executable(morpheus_math_host_test tests/math_host_test.c)
+    target_include_directories(morpheus_math_host_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/host"
+    )
+    target_compile_options(morpheus_math_host_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_math_host_test PRIVATE morpheus_math)
+    add_test(NAME math_host COMMAND morpheus_math_host_test)
+
+    add_executable(morpheus_la_tinycc_test tests/la_tinycc_test.c)
+    add_dependencies(morpheus_la_tinycc_test morpheus_tinycc)
+    target_include_directories(morpheus_la_tinycc_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/tinycc"
+    )
+    target_compile_definitions(morpheus_la_tinycc_test PRIVATE
+        MORPHEUS_LA_INCLUDE_PATH="${CMAKE_SOURCE_DIR}/third_party/la"
+        MORPHEUS_TCC_INCLUDE_PATH="${MORPHEUS_TCC_SOURCE_DIR}/include"
+        MORPHEUS_TCC_LIB_PATH="${MORPHEUS_TCC_BUILD_DIR}"
+    )
+    target_compile_options(morpheus_la_tinycc_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    target_link_libraries(morpheus_la_tinycc_test PRIVATE morpheus_libtcc)
+    add_test(NAME la_tinycc COMMAND morpheus_la_tinycc_test)
 
     add_executable(morpheus_database_service_test
         tests/database_service_test.c

@@ -22,3 +22,6 @@
 [submodule "third_party/stb"]
 	path = third_party/stb
 	url = https://github.com/nothings/stb.git
+[submodule "third_party/la"]
+	path = third_party/la
+	url = https://github.com/tsoding/la.git
