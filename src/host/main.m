@@ -31,6 +31,7 @@ _Static_assert(sizeof(nk_draw_index) == 4,
 #include "authoring_controller.h"
 #include "authoring_shell.h"
 #include "agent_session.h"
+#include "database_service.h"
 #include "export_service.h"
 #include "http_service.h"
 #include "image_service.h"
@@ -199,6 +200,54 @@ static int authoring_storage_root(char *output, unsigned long capacity)
     return length >= 0 && (unsigned long)length < capacity;
 }
 
+static int workspace_database_path(
+    const char *workspace_root, char *output, unsigned long capacity)
+{
+    NSFileManager *manager = NSFileManager.defaultManager;
+    NSString *workspace;
+    NSString *directory;
+    int length;
+    if (!workspace_root || !*workspace_root || !output || !capacity) return 0;
+    workspace = [NSString stringWithUTF8String:workspace_root];
+    directory = [workspace stringByAppendingPathComponent:@"data"];
+    if (![manager createDirectoryAtPath:directory
+            withIntermediateDirectories:YES attributes:nil error:nil]) return 0;
+    length = snprintf(output, (size_t)capacity, "%s/app.sqlite3",
+        directory.fileSystemRepresentation);
+    return length >= 0 && (unsigned long)length < capacity;
+}
+
+static int runtime_database_switch(
+    void *context, const char *workspace_root,
+    char *error, unsigned long error_capacity)
+{
+    char path[MORPHEUS_DATABASE_PATH_CAPACITY];
+    return workspace_database_path(workspace_root, path, sizeof(path)) &&
+        morph_database_service_switch_path(
+            context, path, error, error_capacity);
+}
+
+static int runtime_database_begin_preview(
+    void *context, char *error, unsigned long error_capacity)
+{
+    return morph_database_service_begin_preview(
+        context, error, error_capacity);
+}
+
+static int runtime_database_accept_preview(
+    void *context, char *error, unsigned long error_capacity)
+{
+    return morph_database_service_accept_preview(
+        context, error, error_capacity);
+}
+
+static int runtime_database_reject_preview(
+    void *context, char *error, unsigned long error_capacity)
+{
+    return morph_database_service_reject_preview(
+        context, error, error_capacity);
+}
+
 int main(int argc, char **argv)
 {
     SDL_Window *window = NULL;
@@ -217,17 +266,21 @@ int main(int argc, char **argv)
     morph_project_store projects;
     morph_agent_session agent_session;
     morph_export_service export_service;
-    morph_capability entries[6] = {{0}};
-    morph_capability_registry registry = {entries, 0};
+    morph_capability authoring_entries[6] = {{0}};
+    morph_capability_registry authoring_registry = {authoring_entries, 0};
+    morph_capability runtime_entries[1] = {{0}};
+    morph_capability_registry runtime_registry = {runtime_entries, 0};
     morph_authoring_shell authoring_shell = {0};
     morph_http_service *http_service = NULL;
     morph_image_service *image_service = NULL;
+    morph_database_service *database_service = NULL;
     morph_authoring_controller_config controller_config = {0};
     char module_source[MORPHEUS_AUTHORING_CONTROLLER_PATH_CAPACITY];
     char workspace_root[MORPHEUS_AUTHORING_CONTROLLER_PATH_CAPACITY];
     char assets_root[MORPHEUS_AUTHORING_CONTROLLER_PATH_CAPACITY];
     char projects_root[MORPHEUS_AUTHORING_CONTROLLER_PATH_CAPACITY];
     char authoring_state_root[MORPHEUS_AUTHORING_SHELL_PATH_CAPACITY];
+    char database_path[MORPHEUS_AUTHORING_CONTROLLER_PATH_CAPACITY];
     char error[MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY] = {0};
     char ollama_model[MORPHEUS_AUTHORING_AGENT_MODEL_CAPACITY] = {0};
     const char *agent_provider_path;
@@ -268,10 +321,11 @@ int main(int argc, char **argv)
             snprintf(projects_root, sizeof(projects_root), "%s",
                 root_override && *root_override
                     ? root_override : MORPHEUS_SOURCE_ROOT "/projects");
-            entries[capability_count++] = morph_authoring_projects_capability(&projects);
-            registry.count = capability_count;
+            authoring_entries[capability_count++] =
+                morph_authoring_projects_capability(&projects);
+            authoring_registry.count = capability_count;
             lookup.abi_version = MORPHEUS_HOST_ABI_VERSION;
-            lookup.capabilities = &registry;
+            lookup.capabilities = &authoring_registry;
             provider = morph_host_find_capability(&lookup,
                 MORPHEUS_AUTHORING_PROJECTS_CAPABILITY,
                 MORPHEUS_AUTHORING_PROJECTS_ABI_VERSION);
@@ -290,11 +344,15 @@ int main(int argc, char **argv)
         }
     }
 
-    entries[capability_count++] = morph_authoring_revisions_capability(&revisions);
-    entries[capability_count++] = morph_authoring_modules_capability(&module);
-    entries[capability_count++] = morph_authoring_agent_capability(&agent_session);
-    entries[capability_count++] = morph_authoring_export_capability(&export_service, NULL);
-    registry.count = capability_count;
+    authoring_entries[capability_count++] =
+        morph_authoring_revisions_capability(&revisions);
+    authoring_entries[capability_count++] =
+        morph_authoring_modules_capability(&module);
+    authoring_entries[capability_count++] =
+        morph_authoring_agent_capability(&agent_session);
+    authoring_entries[capability_count++] =
+        morph_authoring_export_capability(&export_service, NULL);
+    authoring_registry.count = capability_count;
 
     agent_provider_path = getenv("MORPHEUS_AGENT_PROVIDER");
     agent_provider_is_custom = agent_provider_path && *agent_provider_path;
@@ -371,11 +429,24 @@ int main(int argc, char **argv)
             ? MORPHEUS_IMAGE_BACKEND_QUARTZ
             : MORPHEUS_IMAGE_BACKEND_METAL);
     host.images = image_service;
+    if (workspace_database_path(
+            workspace_root, database_path, sizeof(database_path))) {
+        database_service = morph_database_service_create(
+            database_path, error, sizeof(error));
+    }
+    if (database_service) {
+        runtime_entries[runtime_registry.count++] =
+            morph_database_service_capability(database_service);
+        host.capabilities = &runtime_registry;
+    } else {
+        SDL_Log("Database capability unavailable: %s",
+            error[0] ? error : "unable to resolve project database path");
+    }
 
     authoring_host = host;
-    authoring_host.capabilities = &registry;
+    authoring_host.capabilities = &authoring_registry;
     controller_initialized = morph_authoring_controller_init(
-        &authoring_controller, &registry, &host);
+        &authoring_controller, &authoring_registry, &host);
     if (!controller_initialized) {
         SDL_Log("Morpheus authoring controller failed to initialize");
         goto shutdown_runtime;
@@ -392,15 +463,25 @@ int main(int argc, char **argv)
         MORPHEUS_SOURCE_ROOT "/include/morpheus/app_api.h";
     controller_config.sdk_header_path =
         MORPHEUS_SOURCE_ROOT "/include/morpheus/sdk.h";
+    if (database_service) {
+        controller_config.runtime_storage_context = database_service;
+        controller_config.runtime_storage_switch = runtime_database_switch;
+        controller_config.runtime_storage_begin_preview =
+            runtime_database_begin_preview;
+        controller_config.runtime_storage_accept_preview =
+            runtime_database_accept_preview;
+        controller_config.runtime_storage_reject_preview =
+            runtime_database_reject_preview;
+    }
     controller_config.agent_provider_is_custom = agent_provider_is_custom;
     controller_config.agent_uses_ollama = agent_uses_ollama;
     if (!morph_authoring_controller_start(
             &authoring_controller, &controller_config, error, sizeof(error))) {
         SDL_Log("Initial project failed to load: %s", error);
     }
-    entries[capability_count++] =
+    authoring_entries[capability_count++] =
         morph_authoring_controller_capability(&authoring_controller);
-    registry.count = capability_count;
+    authoring_registry.count = capability_count;
 
     {
         const char *authoring_source = getenv("MORPHEUS_AUTHORING_UI_SOURCE");
@@ -539,6 +620,7 @@ int main(int argc, char **argv)
     morph_authoring_controller_shutdown(&authoring_controller);
 
 shutdown_runtime:
+    morph_database_service_destroy(database_service);
     morph_image_service_destroy(image_service);
     morph_http_service_destroy(http_service);
     SDL_StopTextInput(window);

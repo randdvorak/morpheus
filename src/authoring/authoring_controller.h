@@ -16,6 +16,16 @@ typedef struct morph_authoring_controller_config {
     const char *sdk_header_path;
     int agent_provider_is_custom;
     int agent_uses_ollama;
+    void *runtime_storage_context;
+    int (*runtime_storage_switch)(
+        void *context, const char *workspace_root,
+        char *error, unsigned long error_capacity);
+    int (*runtime_storage_begin_preview)(
+        void *context, char *error, unsigned long error_capacity);
+    int (*runtime_storage_accept_preview)(
+        void *context, char *error, unsigned long error_capacity);
+    int (*runtime_storage_reject_preview)(
+        void *context, char *error, unsigned long error_capacity);
 } morph_authoring_controller_config;
 
 typedef struct morph_authoring_controller {
@@ -38,6 +48,17 @@ typedef struct morph_authoring_controller {
     int agent_provider_is_custom;
     int agent_uses_ollama;
     int started;
+    int runtime_storage_preview_active;
+    void *runtime_storage_context;
+    int (*runtime_storage_switch)(
+        void *context, const char *workspace_root,
+        char *error, unsigned long error_capacity);
+    int (*runtime_storage_begin_preview)(
+        void *context, char *error, unsigned long error_capacity);
+    int (*runtime_storage_accept_preview)(
+        void *context, char *error, unsigned long error_capacity);
+    int (*runtime_storage_reject_preview)(
+        void *context, char *error, unsigned long error_capacity);
     morph_authoring_request pending_request;
     void *preview_restore_state;
     unsigned long preview_restore_state_size;

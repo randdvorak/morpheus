@@ -33,6 +33,8 @@ ports do not exist yet.
 - Asynchronous native HTTP on macOS through `NSURLSession`
 - Opaque `morph_json_*` parsing and serialization backed by yyjson
 - Host-owned PNG/JPEG loading from memory or HTTP/HTTPS URLs
+- Versioned SQLite persistence with prepared statements, typed values,
+  transactions, atomic migrations, and isolated candidate-preview databases
 - Revision history, crash-session tracking, and durable agent artifacts
 - Ahead-of-time frozen `.app` export with assets, a manifest, persistent state,
   and an ad-hoc hardened-runtime signature
@@ -41,8 +43,9 @@ ports do not exist yet.
 - Generated-module runtime hardening through an explicit libc allowlist and an
   optional `stb_leakcheck` allocation diagnostic
 
-SQLite and miniz are pinned, built, and tested as host dependencies, but stable
-generated-app persistence and compression facades are not implemented yet.
+SQLite persistence is available to generated and frozen applications through a
+host-owned capability; miniz is pinned and tested, but its generated-app
+compression facade is not implemented yet.
 The llama.cpp submodule is also pinned for the planned local model service but
 is not part of the current host executable.
 
@@ -102,7 +105,8 @@ host containing HTTP, JSON, image, logging, and rendering access, but no
 authoring capability registry. Frozen exports omit both authoring archives,
 TinyCC, and agent support.
 
-`libmorpheus_runtime_core.a` contains shared HTTP, JSON, and image services.
+`libmorpheus_runtime_core.a` contains shared HTTP, JSON, image, and database
+services.
 `libmorpheus_standalone_runtime.a` owns the standalone SDL/Nuklear renderer
 lifecycle and persistent-state envelope used by frozen applications. The frozen
 `src/export/main.m` is only a metadata and generated-entry-point adapter.
@@ -135,10 +139,18 @@ const morph_app_api *morph_app_entry(void);
 
 The authoritative ABI and SDK declarations are in
 [`include/morpheus/app_api.h`](include/morpheus/app_api.h) and
-[`include/morpheus/sdk.h`](include/morpheus/sdk.h). The current ABI version is
-3. A module supplies create, destroy, update, render, save-state, and load-state
-callbacks. It may render inside the host's generated-application panel or opt
-into managing its own Nuklear windows with `MORPHEUS_RENDER_NUKLEAR_WINDOWS`.
+[`include/morpheus/sdk.h`](include/morpheus/sdk.h); the optional database table
+is declared in [`include/morpheus/database.h`](include/morpheus/database.h).
+The current ABI version is 3. A module supplies create, destroy, update, render,
+save-state, and load-state callbacks. It may render inside the host's
+generated-application panel or opt into managing its own Nuklear windows with
+`MORPHEUS_RENDER_NUKLEAR_WINDOWS`.
+
+Small UI/session state remains in the `save_state` envelope. Durable domain data
+belongs in the database capability. Development projects store accepted data at
+`projects/<project>/data/app.sqlite3`; candidate previews receive a SQLite
+backup and promote or discard it with the source preview. Frozen applications
+store their database at `~/Library/Application Support/<bundle-id>/app.sqlite3`.
 
 Generated modules are compiled as freestanding C with `-nostdlib -Wall
 -Werror`. Morpheus explicitly exposes the enabled Nuklear symbols and a bounded
@@ -323,6 +335,13 @@ limited to 1 MiB encoded, 4096 pixels per dimension, 16 megapixels decoded, and
 64 live image jobs per host. Procedural applications should cache one uploaded
 image instead of rebuilding large grids of Nuklear primitives every frame.
 
+The database facade exposes opaque, generation-checked statement IDs rather
+than SQLite pointers. It limits SQL to 256 KiB, values to 16 MiB, live
+statements to 64, and query execution time; copies bound text/blob inputs;
+rejects multiple prepared statements, attached databases, extension/file
+functions, and sensitive pragmas; and automatically finalizes statements and
+rolls back unfinished transactions at service shutdown.
+
 ## Dependencies and licensing
 
 Dependencies are pinned as Git submodules so builds do not download packages at
@@ -353,11 +372,10 @@ submodule dependencies remain governed by their respective licenses.
 
 This repository is a development prototype, not a production application SDK.
 The host/UI and frozen-runtime separation milestones are complete for the
-current macOS workflow. Important remaining work includes versioned
-persistence/compression facades, process-isolated generated preview execution,
-secret handling, a host-owned llama.cpp service, cross-platform hosts/renderers,
-robust state migrations, broader clean-machine export validation, and a complete
-Developer ID signing/notarization workflow.
+current macOS workflow. Important remaining work includes a compression facade,
+process-isolated generated preview execution, secret handling, a host-owned
+llama.cpp service, cross-platform hosts/renderers, broader clean-machine export
+validation, and a complete Developer ID signing/notarization workflow.
 
 The detailed design, milestones, and acceptance criteria live in
 [`plan.md`](plan.md). When README behavior and implementation differ, the code

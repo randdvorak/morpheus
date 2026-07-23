@@ -14,6 +14,7 @@
 
 #include "morpheus/app_api.h"
 #include "authoring_capabilities.h"
+#include "database_service.h"
 #include "runtime_module.h"
 
 #ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
@@ -85,7 +86,10 @@ int main(void)
 {
     morph_runtime_module module;
     morph_capability module_capability;
+    morph_capability database_capability;
     morph_capability_registry registry;
+    morph_capability_registry runtime_registry;
+    morph_database_service *database;
     morph_host authoring_host = {0};
     const morph_capability *provider;
     const morph_authoring_modules_api *modules;
@@ -100,6 +104,16 @@ int main(void)
     struct nk_user_font font = {0};
     char error[4096];
     int restored_state = 17;
+
+    database = morph_database_service_create(":memory:", error, sizeof(error));
+    if (!database) {
+        fprintf(stderr, "unable to initialize database capability: %s\n", error);
+        return 18;
+    }
+    database_capability = morph_database_service_capability(database);
+    runtime_registry.entries = &database_capability;
+    runtime_registry.count = 1;
+    host.capabilities = &runtime_registry;
 
     font.height = 15.0f;
     font.width = test_font_width;
@@ -120,7 +134,12 @@ int main(void)
         MORPHEUS_AUTHORING_MODULES_ABI_VERSION);
     modules = morph_authoring_modules_from_capability(provider);
     module_context = provider ? provider->context : NULL;
-    if (!modules || host.capabilities) {
+    if (!modules || !morph_host_find_capability(
+            &host, MORPHEUS_DATABASE_CAPABILITY,
+            MORPHEUS_DATABASE_ABI_VERSION) ||
+        morph_host_find_capability(
+            &host, MORPHEUS_AUTHORING_MODULES_CAPABILITY,
+            MORPHEUS_AUTHORING_MODULES_ABI_VERSION)) {
         fprintf(stderr, "module capability discovery failed\n");
         return 14;
     }
@@ -158,6 +177,20 @@ int main(void)
             "stdlib-smoke", "TinyCC stdlib available")) {
         fprintf(stderr, "forbidden stdlib symbol was available: %s\n", error);
         return 15;
+    }
+    modules->destroy(module_context, &host);
+
+    if (!modules->reload(
+            module_context,
+            &host,
+            MORPHEUS_TEST_FIXTURE_ROOT "/module_database.c",
+            error,
+            sizeof(error)) ||
+        !expect_active(
+            modules, module_context, &host,
+            "database-smoke", "TinyCC database available")) {
+        fprintf(stderr, "database capability module failed to load: %s\n", error);
+        return 19;
     }
     modules->destroy(module_context, &host);
 
@@ -330,6 +363,7 @@ int main(void)
     }
 #endif
     nk_free(&nuklear);
+    morph_database_service_destroy(database);
     puts("PASS: transactional activation, migration, and checkpoint restoration");
     return 0;
 }

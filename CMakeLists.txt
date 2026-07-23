@@ -287,6 +287,7 @@ target_compile_options(morpheus_stb_image PRIVATE
 # Morpheus authoring UI so frozen applications cannot acquire those components
 # transitively.
 add_library(morpheus_runtime_core STATIC
+    src/host/database_service.c
     src/host/http_service.m
     src/host/image_service.m
     src/host/json_service.c
@@ -307,6 +308,7 @@ target_compile_options(morpheus_runtime_core PRIVATE
     $<$<COMPILE_LANGUAGE:OBJC>:-Wno-c23-extensions>
 )
 target_link_libraries(morpheus_runtime_core PRIVATE
+    morpheus_sqlite
     yyjson
     morpheus_stb_image
     "-framework CoreGraphics"
@@ -364,7 +366,8 @@ target_link_libraries(morpheus_standalone_runtime PRIVATE
 
 if(EXISTS "${MORPHEUS_FROZEN_SOURCE}")
 file(SHA256 "${MORPHEUS_FROZEN_SOURCE}" MORPHEUS_FROZEN_SOURCE_SHA256)
-foreach(MORPHEUS_EXPORT_DEPENDENCY SDL Nuklear third_party/yyjson third_party/stb)
+foreach(MORPHEUS_EXPORT_DEPENDENCY
+        SDL Nuklear third_party/sqlite third_party/yyjson third_party/stb)
     string(REPLACE "/" "_" MORPHEUS_EXPORT_DEPENDENCY_KEY "${MORPHEUS_EXPORT_DEPENDENCY}")
     string(TOUPPER "${MORPHEUS_EXPORT_DEPENDENCY_KEY}" MORPHEUS_EXPORT_DEPENDENCY_KEY)
     execute_process(
@@ -555,7 +558,6 @@ target_compile_options(morpheus PRIVATE
 target_link_libraries(morpheus PRIVATE
     morpheus_authoring_ui
     morpheus_authoring
-    morpheus_sqlite
     miniz
     SDL3::SDL3-static
     "-framework AppKit"
@@ -852,6 +854,7 @@ if(BUILD_TESTING)
         "${CMAKE_SOURCE_DIR}/src/authoring"
         "${CMAKE_SOURCE_DIR}/src/compiler"
         "${CMAKE_SOURCE_DIR}/src/project"
+        "${CMAKE_SOURCE_DIR}/src/host"
         "${CMAKE_SOURCE_DIR}/tinycc"
     )
     target_compile_definitions(morpheus_runtime_reload_test PRIVATE
@@ -870,6 +873,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_runtime_reload_test PRIVATE
         morpheus_authoring
+        morpheus_runtime_core
         yyjson
     )
     set_target_properties(morpheus_runtime_reload_test PROPERTIES ENABLE_EXPORTS TRUE)
@@ -944,6 +948,25 @@ if(BUILD_TESTING)
     )
     target_link_libraries(morpheus_sqlite_test PRIVATE morpheus_sqlite)
     add_test(NAME sqlite COMMAND morpheus_sqlite_test)
+
+    add_executable(morpheus_database_service_test
+        tests/database_service_test.c
+    )
+    target_include_directories(morpheus_database_service_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/host"
+    )
+    target_compile_options(morpheus_database_service_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wno-c23-extensions
+    )
+    target_link_libraries(morpheus_database_service_test PRIVATE
+        morpheus_runtime_core
+    )
+    add_test(NAME database_service COMMAND morpheus_database_service_test)
 
     add_executable(morpheus_yyjson_test tests/yyjson_test.c)
     target_include_directories(morpheus_yyjson_test PRIVATE

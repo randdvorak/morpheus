@@ -48,8 +48,13 @@ bundle. Tests can override the parent location with
 `MORPHEUS_APP_SUPPORT_DIR`. The state envelope records its format and app ABI;
 the generated app remains responsible for versioning and migrating its payload.
 
-The first frozen profile exposes HTTP, JSON, and image capabilities. It links
-SDL, Nuklear, yyjson, and stb into the executable and dynamically links only
-macOS system libraries and frameworks. It honors the same optional
+Durable application records use the database capability and are stored beside
+the state envelope as `app.sqlite3`. The generated app receives prepared
+statement, typed binding/column, transaction, and atomic migration operations;
+it never receives the database path or a raw SQLite handle.
+
+The frozen profile exposes HTTP, JSON, image, and database capabilities. It
+links SDL, Nuklear, SQLite, yyjson, and stb into the executable and dynamically
+links only macOS system libraries and frameworks. It honors the same optional
 `morph_app_render_mode` export as the development host, so full-window Nuklear
 applications are not placed inside an extra host-owned window after export.

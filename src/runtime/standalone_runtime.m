@@ -28,6 +28,7 @@ _Static_assert(sizeof(nk_draw_index) == 4,
 
 #include "morpheus/app_api.h"
 #include "morpheus/runtime.h"
+#include "database_service.h"
 #include "http_service.h"
 #include "image_service.h"
 #include "morpheus_frame_scheduler.h"
@@ -150,7 +151,7 @@ static void handle_event(struct nk_context *ctx, const SDL_Event *event)
     }
 }
 
-static NSURL *state_file_url(const morph_runtime_config *config)
+static NSURL *application_support_url(const morph_runtime_config *config)
 {
     NSFileManager *manager = NSFileManager.defaultManager;
     const char *override = getenv("MORPHEUS_APP_SUPPORT_DIR");
@@ -167,7 +168,19 @@ static NSURL *state_file_url(const morph_runtime_config *config)
     NSURL *directory = [support URLByAppendingPathComponent:identifier isDirectory:YES];
     if (![manager createDirectoryAtURL:directory withIntermediateDirectories:YES
             attributes:nil error:nil]) return nil;
-    return [directory URLByAppendingPathComponent:@"state.bin" isDirectory:NO];
+    return directory;
+}
+
+static NSURL *state_file_url(const morph_runtime_config *config)
+{
+    return [application_support_url(config)
+        URLByAppendingPathComponent:@"state.bin" isDirectory:NO];
+}
+
+static NSURL *database_file_url(const morph_runtime_config *config)
+{
+    return [application_support_url(config)
+        URLByAppendingPathComponent:@"app.sqlite3" isDirectory:NO];
 }
 
 static void restore_state(
@@ -226,6 +239,9 @@ int morph_runtime_run(
     morph_host host = {0};
     morph_http_service *http = NULL;
     morph_image_service *images = NULL;
+    morph_database_service *database = NULL;
+    morph_capability runtime_entries[17] = {{0}};
+    morph_capability_registry runtime_registry = {runtime_entries, 0};
     const char *fallback_name = "Morpheus App";
     unsigned int render_mode = MORPHEUS_RENDER_EMBEDDED;
     int initial_width = MORPH_DEFAULT_WINDOW_WIDTH;
@@ -238,6 +254,8 @@ int morph_runtime_run(
     float font_scale;
     Uint64 previous_ticks;
     int exit_code = EXIT_FAILURE;
+    char database_error[192] = {0};
+    unsigned long capability_index;
 
     if (config) {
         if (config->fallback_name) fallback_name = config->fallback_name;
@@ -252,6 +270,12 @@ int morph_runtime_run(
     }
     if (render_mode > MORPHEUS_RENDER_NUKLEAR_WINDOWS) {
         fprintf(stderr, "Exported application render mode is invalid\n");
+        return EXIT_FAILURE;
+    }
+    if (config && config->capabilities &&
+        ((config->capabilities->count && !config->capabilities->entries) ||
+         config->capabilities->count > 16u)) {
+        fprintf(stderr, "Too many exported runtime capabilities\n");
         return EXIT_FAILURE;
     }
     {
@@ -292,6 +316,30 @@ int morph_runtime_run(
         renderer_kind == MORPH_NUKLEAR_RENDERER_QUARTZ
             ? MORPHEUS_IMAGE_BACKEND_QUARTZ
             : MORPHEUS_IMAGE_BACKEND_METAL);
+    {
+        NSURL *database_url = database_file_url(config);
+        database = morph_database_service_create(
+            database_url.fileSystemRepresentation,
+            database_error, sizeof(database_error));
+        if (database) {
+            runtime_entries[runtime_registry.count++] =
+                morph_database_service_capability(database);
+        } else {
+            SDL_Log("Database capability unavailable: %s", database_error);
+        }
+    }
+    if (config && config->capabilities) {
+        for (capability_index = 0;
+             capability_index < config->capabilities->count;
+             ++capability_index) {
+            const morph_capability *capability =
+                &config->capabilities->entries[capability_index];
+            if (capability->identifier &&
+                strcmp(capability->identifier,
+                    MORPHEUS_DATABASE_CAPABILITY) == 0) continue;
+            runtime_entries[runtime_registry.count++] = *capability;
+        }
+    }
     ui.nuklear = &ctx;
     host.abi_version = MORPHEUS_HOST_ABI_VERSION;
     host.user_data = &ui;
@@ -301,7 +349,7 @@ int morph_runtime_run(
     host.nuklear = &ctx;
     host.http = http;
     host.images = images;
-    host.capabilities = config ? config->capabilities : NULL;
+    host.capabilities = runtime_registry.count ? &runtime_registry : NULL;
     if (!api->create(&host, &state)) goto shutdown_ui;
     restore_state(api, &host, &state, config);
 
@@ -361,6 +409,7 @@ int morph_runtime_run(
     exit_code = EXIT_SUCCESS;
 
 shutdown_ui:
+    morph_database_service_destroy(database);
     morph_image_service_destroy(images);
     morph_http_service_destroy(http);
     SDL_StopTextInput(window);

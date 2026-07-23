@@ -97,6 +97,9 @@ typedef struct morph_app_api {
 typedef const morph_app_api *(*morph_app_entry_fn)(void);
 typedef unsigned int (*morph_app_render_mode_fn)(void);
 
+/* Optional runtime capability tables that depend on morph_capability. */
+#include "morpheus/database.h"
+
 #ifdef MORPHEUS_ENABLE_RUNTIME_LEAKCHECK
 #include "morpheus/leakcheck.h"
 #endif

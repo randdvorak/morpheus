@@ -349,6 +349,12 @@ static int switch_project(
             sizeof(controller->source_path),
             controller->assets_root,
             sizeof(controller->assets_root))) return 0;
+    if (controller->runtime_storage_switch &&
+        !controller->runtime_storage_switch(
+            controller->runtime_storage_context,
+            controller->workspace_root,
+            error,
+            MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY)) return 0;
     return load_current_project(controller, error);
 }
 
@@ -409,9 +415,38 @@ static int submit_agent(
 
 static int accept_preview(morph_authoring_controller *controller, char *error)
 {
+    const void *state_data = NULL;
+    void *state_copy = NULL;
+    unsigned long state_size = 0;
     int source_updated;
     int accepted;
     if (!controller->agent_preview_active || !controller->revision_store_ready) return 0;
+    if (controller->runtime_storage_preview_active) {
+        if (!controller->modules->capture_state(
+                controller->modules_context,
+                controller->runtime_host,
+                &state_data,
+                &state_size,
+                error,
+                MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY)) return 0;
+        if (state_size) {
+            state_copy = malloc((size_t)state_size);
+            if (!state_copy) {
+                set_text(error, MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY,
+                    "Unable to preserve accepted preview state");
+                return 0;
+            }
+            memcpy(state_copy, state_data, (size_t)state_size);
+        }
+        if (!controller->modules->compile_candidate(
+                controller->modules_context,
+                controller->agent->candidate_path(controller->agent_context),
+                error,
+                MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY)) {
+            free(state_copy);
+            return 0;
+        }
+    }
     source_updated = controller->agent->accept_source(
         controller->agent_context,
         controller->source_path,
@@ -428,7 +463,29 @@ static int accept_preview(morph_authoring_controller *controller, char *error)
             error,
             MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY);
     }
-    if (!accepted) return 0;
+    if (!accepted) {
+        free(state_copy);
+        return 0;
+    }
+    if (controller->runtime_storage_preview_active) {
+        accepted = controller->runtime_storage_accept_preview &&
+            controller->runtime_storage_accept_preview(
+                controller->runtime_storage_context,
+                error,
+                MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY);
+        if (accepted) {
+            controller->runtime_storage_preview_active = 0;
+            accepted = controller->modules->activate_candidate_with_state(
+                controller->modules_context,
+                controller->runtime_host,
+                state_copy,
+                state_size,
+                error,
+                MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY);
+        }
+        free(state_copy);
+        if (!accepted) return 0;
+    }
     (void)controller->revisions->refresh_session(
         controller->revisions_context,
         error,
@@ -456,8 +513,16 @@ static int reject_preview(morph_authoring_controller *controller, char *error)
             controller->modules_context,
             controller->agent->source_before_path(controller->agent_context),
             error,
-            MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY) &&
-        controller->modules->activate_candidate_with_state(
+            MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY);
+    if (rejected && controller->runtime_storage_preview_active) {
+        rejected = controller->runtime_storage_reject_preview &&
+            controller->runtime_storage_reject_preview(
+                controller->runtime_storage_context,
+                error,
+                MORPHEUS_AUTHORING_CONTROLLER_MESSAGE_CAPACITY);
+        if (rejected) controller->runtime_storage_preview_active = 0;
+    }
+    rejected = rejected && controller->modules->activate_candidate_with_state(
             controller->modules_context,
             controller->runtime_host,
             controller->preview_restore_state,
@@ -565,6 +630,13 @@ static void poll_agent(morph_authoring_controller *controller)
             succeeded = controller->revisions->end_session(
                 controller->revisions_context, ignored, sizeof(ignored));
         }
+        if (succeeded && controller->runtime_storage_begin_preview) {
+            succeeded = controller->runtime_storage_begin_preview(
+                controller->runtime_storage_context,
+                error,
+                sizeof(error));
+            controller->runtime_storage_preview_active = succeeded;
+        }
         if (succeeded) succeeded = controller->modules->activate_candidate(
             controller->modules_context,
             controller->runtime_host,
@@ -579,6 +651,29 @@ static void poll_agent(morph_authoring_controller *controller)
             error,
             ignored,
             sizeof(ignored));
+        if (!succeeded && controller->runtime_storage_preview_active &&
+            controller->runtime_storage_reject_preview) {
+            int storage_restored = controller->runtime_storage_reject_preview(
+                controller->runtime_storage_context,
+                ignored,
+                sizeof(ignored));
+            controller->runtime_storage_preview_active = 0;
+            if (storage_restored) {
+                (void)(controller->modules->compile_candidate(
+                        controller->modules_context,
+                        controller->agent->source_before_path(
+                            controller->agent_context),
+                        ignored,
+                        sizeof(ignored)) &&
+                    controller->modules->activate_candidate_with_state(
+                        controller->modules_context,
+                        controller->runtime_host,
+                        controller->preview_restore_state,
+                        controller->preview_restore_state_size,
+                        ignored,
+                        sizeof(ignored)));
+            }
+        }
         (void)controller->agent->create_patch(
             controller->agent_context, ignored, sizeof(ignored));
     } else if (!controller->agent->read_provider_log(
@@ -867,6 +962,14 @@ int morph_authoring_controller_start(
     controller->projects_enabled = config->projects_enabled && controller->projects;
     controller->agent_provider_is_custom = config->agent_provider_is_custom;
     controller->agent_uses_ollama = config->agent_uses_ollama;
+    controller->runtime_storage_context = config->runtime_storage_context;
+    controller->runtime_storage_switch = config->runtime_storage_switch;
+    controller->runtime_storage_begin_preview =
+        config->runtime_storage_begin_preview;
+    controller->runtime_storage_accept_preview =
+        config->runtime_storage_accept_preview;
+    controller->runtime_storage_reject_preview =
+        config->runtime_storage_reject_preview;
     set_text(controller->workspace_root, sizeof(controller->workspace_root),
         config->workspace_root);
     set_text(controller->source_path, sizeof(controller->source_path),
@@ -1025,6 +1128,12 @@ void morph_authoring_controller_shutdown(morph_authoring_controller *controller)
     controller->preview_restore_state_size = 0;
     controller->modules->destroy(
         controller->modules_context, controller->runtime_host);
+    if (controller->runtime_storage_preview_active &&
+        controller->runtime_storage_reject_preview) {
+        (void)controller->runtime_storage_reject_preview(
+            controller->runtime_storage_context, ignored, sizeof(ignored));
+        controller->runtime_storage_preview_active = 0;
+    }
     if (controller->revision_store_ready) {
         (void)controller->revisions->end_session(
             controller->revisions_context, ignored, sizeof(ignored));

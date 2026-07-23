@@ -657,9 +657,9 @@ in exported applications.
 ### Runtime Separation Progress (2026-07-20)
 
 - Steps 1 through 4 are implemented. `morpheus_runtime_core` builds HTTP, JSON,
-  and image services as `libmorpheus_runtime_core.a`, and both production
+  image, and database services as `libmorpheus_runtime_core.a`, and both production
   executables link that target instead of compiling private copies.
-- The standalone SDL/Nuklear/Metal lifecycle and persistence implementation is
+- The standalone SDL/Nuklear renderer lifecycle and persistence implementation is
   isolated in `libmorpheus_standalone_runtime.a` behind
   `morph_runtime_run`. The frozen `src/export/main.m` is now only a metadata and
   generated-entry-point adapter.
@@ -713,6 +713,13 @@ in exported applications.
   Tcl process launcher. CMake first builds SQLite's bundled `jimsh0`, uses it to
   configure SQLite with Tcl disabled, and stores ExternalProject stamps beside
   the purgeable staging artifacts so stale stamps cannot outlive the build.
+- Generated and frozen applications now discover the versioned
+  `dev.morpheus.runtime.database` capability. It provides bounded prepared
+  statements, copied typed bindings, borrowed typed columns, transactions,
+  contiguous atomic migrations, stable errors, and generation-checked handles
+  without exposing SQLite pointers or filesystem paths. Development previews
+  use SQLite backups that are promoted on accept and discarded on reject;
+  switching projects also switches the host-owned database connection.
 - A rebuilt frozen fixture contains no authoring, project/revision-store, agent,
   runtime-compiler, libtcc, or TinyCC symbols or strings; it links only system
   libraries/frameworks and passes strict verification after hardened ad-hoc

@@ -9,10 +9,11 @@
   "profile": "frozen",
   "link_time_dead_strip": true,
   "symbols_stripped": true,
-  "capabilities": ["http", "json", "images"],
+  "capabilities": ["http", "json", "images", "database"],
   "dependencies": {
     "sdl": "@MORPHEUS_EXPORT_SDL_REVISION@",
     "nuklear": "@MORPHEUS_EXPORT_NUKLEAR_REVISION@",
+    "sqlite": "@MORPHEUS_EXPORT_THIRD_PARTY_SQLITE_REVISION@",
     "yyjson": "@MORPHEUS_EXPORT_THIRD_PARTY_YYJSON_REVISION@",
     "stb": "@MORPHEUS_EXPORT_THIRD_PARTY_STB_REVISION@"
   },
