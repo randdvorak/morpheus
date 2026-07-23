@@ -5,6 +5,8 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+#include "morpheus_nuklear_frame_cache.h"
+
 #define NK_METAL_FRAMES_IN_FLIGHT 3u
 #define NK_METAL_INITIAL_VERTEX_CAPACITY (256u * 1024u)
 #define NK_METAL_INITIAL_INDEX_CAPACITY (128u * 1024u)
@@ -34,14 +36,26 @@ struct nk_metal {
     struct nk_buffer commands;
     struct nk_metal_frame frames[NK_METAL_FRAMES_IN_FLIGHT];
     unsigned int frame_index;
+    struct morph_nuklear_frame_cache frame_cache;
+    CGSize last_drawable_size;
+    CGSize last_viewport_size;
+    struct nk_colorf last_clear;
+    enum nk_anti_aliasing last_aa;
+    int has_presentation_state;
+    int invalidated;
+    int last_frame_rendered;
     nk_size last_vertex_bytes;
     nk_size last_index_bytes;
     unsigned int last_draw_count;
+    unsigned long long rendered_frame_count;
+    unsigned long long skipped_frame_count;
+    unsigned long long attempted_frame_count;
 };
 
 NK_API int nk_metal_init(struct nk_metal *metal, MTLPixelFormat format);
 NK_API void nk_metal_upload_atlas(struct nk_metal *metal, const void *pixels,
     int width, int height, struct nk_font_atlas *atlas);
+NK_API void nk_metal_invalidate(struct nk_metal *metal);
 NK_API void nk_metal_render(struct nk_metal *metal, struct nk_context *ctx,
     CAMetalLayer *layer, struct nk_colorf clear, enum nk_anti_aliasing aa);
 NK_API void nk_metal_shutdown(struct nk_metal *metal);
@@ -166,6 +180,7 @@ nk_metal_init(struct nk_metal *metal, MTLPixelFormat format)
          "}\n";
 
     NK_MEMSET(metal, 0, sizeof(*metal));
+    metal->invalidated = 1;
     metal->device = MTLCreateSystemDefaultDevice();
     if (!metal->device) return 0;
     metal->queue = [metal->device newCommandQueue];
@@ -220,6 +235,27 @@ nk_metal_upload_atlas(struct nk_metal *metal, const void *pixels, int width,
 }
 
 NK_API void
+nk_metal_invalidate(struct nk_metal *metal)
+{
+    if (metal) metal->invalidated = 1;
+}
+
+NK_INTERN int
+nk_metal_presentation_changed(const struct nk_metal *metal,
+    CGSize drawable_size, CGSize viewport_size, struct nk_colorf clear,
+    enum nk_anti_aliasing aa)
+{
+    if (!metal->has_presentation_state) return 1;
+    return metal->last_drawable_size.width != drawable_size.width ||
+        metal->last_drawable_size.height != drawable_size.height ||
+        metal->last_viewport_size.width != viewport_size.width ||
+        metal->last_viewport_size.height != viewport_size.height ||
+        metal->last_clear.r != clear.r || metal->last_clear.g != clear.g ||
+        metal->last_clear.b != clear.b || metal->last_clear.a != clear.a ||
+        metal->last_aa != aa;
+}
+
+NK_API void
 nk_metal_render(struct nk_metal *metal, struct nk_context *ctx,
     CAMetalLayer *layer, struct nk_colorf clear, enum nk_anti_aliasing aa)
 {
@@ -233,10 +269,12 @@ nk_metal_render(struct nk_metal *metal, struct nk_context *ctx,
     MTLRenderPassDescriptor *pass;
     MTLScissorRect bound_scissor = {0, 0, 0, 0};
     CGSize drawable_size;
+    CGSize viewport_size;
     float viewport[2];
     float scale_x, scale_y;
     nk_size index_offset = 0;
     int has_bound_scissor = 0;
+    int force_redraw;
     static const struct nk_draw_vertex_layout_element layout[] = {
         {NK_VERTEX_POSITION, NK_FORMAT_FLOAT,
             NK_OFFSETOF(struct nk_metal_vertex, position)},
@@ -250,6 +288,17 @@ nk_metal_render(struct nk_metal *metal, struct nk_context *ctx,
     metal->last_vertex_bytes = 0;
     metal->last_index_bytes = 0;
     metal->last_draw_count = 0;
+    metal->last_frame_rendered = 0;
+    metal->attempted_frame_count++;
+    drawable_size = layer.drawableSize;
+    viewport_size = layer.bounds.size;
+    force_redraw = metal->invalidated || nk_metal_presentation_changed(
+        metal, drawable_size, viewport_size, clear, aa);
+    if (!force_redraw && morph_nuklear_frame_matches(&metal->frame_cache, ctx)) {
+        metal->skipped_frame_count++;
+        goto cleanup;
+    }
+
     frame = &metal->frames[metal->frame_index];
     metal->frame_index = (metal->frame_index + 1u) % NK_METAL_FRAMES_IN_FLIGHT;
     if (frame->command_buffer) {
@@ -272,9 +321,8 @@ nk_metal_render(struct nk_metal *metal, struct nk_context *ctx,
 
     drawable = [layer nextDrawable];
     if (!drawable) goto cleanup;
-    drawable_size = layer.drawableSize;
-    viewport[0] = (float)layer.bounds.size.width;
-    viewport[1] = (float)layer.bounds.size.height;
+    viewport[0] = (float)viewport_size.width;
+    viewport[1] = (float)viewport_size.height;
     if (viewport[0] <= 0.0f || viewport[1] <= 0.0f) goto cleanup;
     scale_x = (float)drawable_size.width / viewport[0];
     scale_y = (float)drawable_size.height / viewport[1];
@@ -341,6 +389,14 @@ nk_metal_render(struct nk_metal *metal, struct nk_context *ctx,
     [command_buffer presentDrawable:drawable];
     [command_buffer commit];
     frame->command_buffer = command_buffer;
+    metal->last_drawable_size = drawable_size;
+    metal->last_viewport_size = viewport_size;
+    metal->last_clear = clear;
+    metal->last_aa = aa;
+    metal->has_presentation_state = 1;
+    metal->last_frame_rendered = 1;
+    metal->rendered_frame_count++;
+    metal->invalidated = !morph_nuklear_frame_store(&metal->frame_cache, ctx);
 
 cleanup:
     if (encoder) [encoder endEncoding];
@@ -353,6 +409,7 @@ nk_metal_shutdown(struct nk_metal *metal)
 {
     unsigned int index;
     nk_buffer_free(&metal->commands);
+    morph_nuklear_frame_cache_free(&metal->frame_cache);
     for (index = 0; index < NK_METAL_FRAMES_IN_FLIGHT; ++index) {
         if (metal->frames[index].command_buffer) {
             [metal->frames[index].command_buffer waitUntilCompleted];

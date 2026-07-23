@@ -16,6 +16,7 @@
 #define NK_INCLUDE_DEFAULT_FONT
 #define NK_INCLUDE_COMMAND_USERDATA
 #define NK_UINT_DRAW_INDEX
+#define NK_ZERO_COMMAND_MEMORY
 #define NK_IMPLEMENTATION
 #include "nuklear.h"
 
@@ -29,6 +30,7 @@ _Static_assert(sizeof(nk_draw_index) == 4,
 #include "morpheus/runtime.h"
 #include "http_service.h"
 #include "image_service.h"
+#include "morpheus_frame_scheduler.h"
 #include "theme.h"
 
 #define MORPH_DEFAULT_WINDOW_WIDTH 1000
@@ -305,14 +307,37 @@ int morph_runtime_run(
     previous_ticks = SDL_GetTicksNS();
     while (running) {
         SDL_Event event;
-        Uint64 ticks = SDL_GetTicksNS();
-        double dt = (double)(ticks - previous_ticks) / 1000000000.0;
+        Uint64 ticks;
+        double dt;
+        int has_event;
+        int wait_timeout_ms;
         int pixel_width, pixel_height, window_width, window_height;
+        wait_timeout_ms = morph_frame_wait_timeout_ms(
+            metal.attempted_frame_count);
+        has_event = wait_timeout_ms
+            ? SDL_WaitEventTimeout(&event, wait_timeout_ms)
+            : SDL_PollEvent(&event);
+        ticks = SDL_GetTicksNS();
+        dt = (double)(ticks - previous_ticks) / 1000000000.0;
         previous_ticks = ticks;
         nk_input_begin(&ctx);
-        while (SDL_PollEvent(&event)) {
+        while (has_event) {
             if (event.type == SDL_EVENT_QUIT) running = 0;
+            switch (event.type) {
+            case SDL_EVENT_WINDOW_SHOWN:
+            case SDL_EVENT_WINDOW_EXPOSED:
+            case SDL_EVENT_WINDOW_RESIZED:
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            case SDL_EVENT_WINDOW_RESTORED:
+            case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+            case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+                nk_metal_invalidate(&metal);
+                break;
+            default:
+                break;
+            }
             handle_event(&ctx, &event);
+            has_event = SDL_PollEvent(&event);
         }
         nk_input_end(&ctx);
         morph_http_service_tick(http);

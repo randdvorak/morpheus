@@ -604,6 +604,34 @@ if(BUILD_TESTING)
     )
     add_test(NAME nuklear_large_draw COMMAND morpheus_nuklear_large_draw_test)
 
+    add_executable(morpheus_nuklear_frame_cache_test
+        tests/nuklear_frame_cache_test.c
+    )
+    target_include_directories(morpheus_nuklear_frame_cache_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/host"
+    )
+    target_compile_options(morpheus_nuklear_frame_cache_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wno-c23-extensions
+    )
+    add_test(NAME nuklear_frame_cache COMMAND morpheus_nuklear_frame_cache_test)
+
+    add_executable(morpheus_frame_scheduler_test
+        tests/frame_scheduler_test.c
+    )
+    target_include_directories(morpheus_frame_scheduler_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src/host"
+    )
+    target_compile_options(morpheus_frame_scheduler_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+    add_test(NAME frame_scheduler COMMAND morpheus_frame_scheduler_test)
+
     add_executable(morpheus_capability_registry_test
         tests/capability_registry_test.c
     )
