@@ -3,7 +3,6 @@
 #include <string.h>
 
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_metal.h>
 #import <Foundation/Foundation.h>
 
 #define NK_INCLUDE_FIXED_TYPES
@@ -23,7 +22,8 @@ _Static_assert(sizeof(nk_draw_index) == 4,
     "Morpheus requires 32-bit Nuklear draw indices");
 
 #define NK_METAL_IMPLEMENTATION
-#include "morpheus_nuklear_metal.h"
+#define NK_QUARTZ_IMPLEMENTATION
+#include "morpheus_nuklear_renderer.h"
 
 #include "morpheus/authoring.h"
 #include "morpheus/authoring_app.h"
@@ -202,12 +202,11 @@ static int authoring_storage_root(char *output, unsigned long capacity)
 int main(int argc, char **argv)
 {
     SDL_Window *window = NULL;
-    SDL_MetalView view = NULL;
-    CAMetalLayer *layer;
     struct nk_context ctx;
     struct nk_font_atlas atlas;
     struct nk_font *font;
-    struct nk_metal metal;
+    struct morph_nuklear_renderer renderer;
+    morph_nuklear_renderer_kind renderer_kind;
     struct nk_colorf background = {0.22f, 0.27f, 0.33f, 1.0f};
     morph_ui_context ui;
     morph_host host = {0};
@@ -324,26 +323,22 @@ int main(int argc, char **argv)
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return EXIT_FAILURE;
     }
+    renderer_kind = morph_nuklear_renderer_kind_from_environment();
     window = SDL_CreateWindow("Morpheus", WINDOW_WIDTH, WINDOW_HEIGHT,
-        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_METAL);
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+        morph_nuklear_renderer_window_flags(renderer_kind));
     if (!window) {
         SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
         goto shutdown_sdl;
     }
-    view = SDL_Metal_CreateView(window);
-    if (!view) {
-        SDL_Log("SDL_Metal_CreateView failed: %s", SDL_GetError());
+    if (!morph_nuklear_renderer_init(&renderer, window, renderer_kind)) {
+        SDL_Log("Unable to initialize Nuklear %s renderer: %s",
+            renderer_kind == MORPH_NUKLEAR_RENDERER_QUARTZ ? "Quartz" : "Metal",
+            SDL_GetError());
         goto shutdown_window;
     }
-    layer = (__bridge CAMetalLayer *)SDL_Metal_GetLayer(view);
-    if (!nk_metal_init(&metal, MTLPixelFormatBGRA8Unorm)) {
-        SDL_Log("Unable to initialize Nuklear Metal renderer");
-        goto shutdown_view;
-    }
-    layer.device = metal.device;
-    layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-    layer.framebufferOnly = YES;
-    layer.displaySyncEnabled = YES;
+    SDL_Log("Using Nuklear %s renderer",
+        renderer_kind == MORPH_NUKLEAR_RENDERER_QUARTZ ? "Quartz" : "Metal");
 
     nk_init_default(&ctx, NULL);
     morph_apply_light_theme(&ctx);
@@ -355,7 +350,8 @@ int main(int argc, char **argv)
     font = nk_font_atlas_add_default(&atlas, 15.0f * font_scale, NULL);
     pixels = nk_font_atlas_bake(&atlas, &atlas_width, &atlas_height,
         NK_FONT_ATLAS_RGBA32);
-    nk_metal_upload_atlas(&metal, pixels, atlas_width, atlas_height, &atlas);
+    morph_nuklear_renderer_upload_atlas(
+        &renderer, pixels, atlas_width, atlas_height, &atlas, font);
     font->handle.height /= font_scale;
     nk_style_set_font(&ctx, &font->handle);
     SDL_StartTextInput(window);
@@ -370,7 +366,10 @@ int main(int argc, char **argv)
     http_service = morph_http_service_create();
     host.http = http_service;
     image_service = morph_image_service_create(
-        (__bridge void *)metal.device, &ctx, http_service);
+        morph_nuklear_renderer_metal_device(&renderer), &ctx, http_service,
+        renderer_kind == MORPH_NUKLEAR_RENDERER_QUARTZ
+            ? MORPHEUS_IMAGE_BACKEND_QUARTZ
+            : MORPHEUS_IMAGE_BACKEND_METAL);
     host.images = image_service;
 
     authoring_host = host;
@@ -429,12 +428,8 @@ int main(int argc, char **argv)
         double dt;
         int has_event;
         int wait_timeout_ms;
-        int pixel_width;
-        int pixel_height;
-        int window_width;
-        int window_height;
         wait_timeout_ms = morph_frame_wait_timeout_ms(
-            metal.attempted_frame_count);
+            morph_nuklear_renderer_attempted_frame_count(&renderer));
         has_event = wait_timeout_ms
             ? SDL_WaitEventTimeout(&event, wait_timeout_ms)
             : SDL_PollEvent(&event);
@@ -456,7 +451,7 @@ int main(int argc, char **argv)
             case SDL_EVENT_WINDOW_RESTORED:
             case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
             case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-                nk_metal_invalidate(&metal);
+                morph_nuklear_renderer_invalidate(&renderer);
                 break;
             default:
                 break;
@@ -535,12 +530,8 @@ int main(int argc, char **argv)
             nk_end(&ctx);
         }
 
-        SDL_GetWindowSize(window, &window_width, &window_height);
-        SDL_GetWindowSizeInPixels(window, &pixel_width, &pixel_height);
-        layer.drawableSize = CGSizeMake(pixel_width, pixel_height);
-        if (window_width > 0 && window_height > 0) {
-            nk_metal_render(&metal, &ctx, layer, background, NK_ANTI_ALIASING_ON);
-        }
+        morph_nuklear_renderer_render(
+            &renderer, &ctx, background, NK_ANTI_ALIASING_ON);
     }
 
     exit_code = EXIT_SUCCESS;
@@ -551,11 +542,9 @@ shutdown_runtime:
     morph_image_service_destroy(image_service);
     morph_http_service_destroy(http_service);
     SDL_StopTextInput(window);
+    morph_nuklear_renderer_shutdown(&renderer);
     nk_font_atlas_clear(&atlas);
     nk_free(&ctx);
-    nk_metal_shutdown(&metal);
-shutdown_view:
-    if (view) SDL_Metal_DestroyView(view);
 shutdown_window:
     if (window) SDL_DestroyWindow(window);
 shutdown_sdl:

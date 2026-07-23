@@ -91,7 +91,8 @@ int main(void)
 
     if (!device) return 77;
     http = morph_http_service_create();
-    images = morph_image_service_create((__bridge void *)device, NULL, http);
+    images = morph_image_service_create((__bridge void *)device, NULL, http,
+        MORPHEUS_IMAGE_BACKEND_METAL);
     if (!http || !images) return 1;
 
     memory_image = morph_image_load_memory(images, png_1x1_rgba, sizeof(png_1x1_rgba));

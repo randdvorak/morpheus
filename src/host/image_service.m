@@ -1,6 +1,7 @@
 #include "morpheus/app_api.h"
 #include "image_service.h"
 
+#include <CoreGraphics/CoreGraphics.h>
 #include <Metal/Metal.h>
 #include <limits.h>
 #include <stdio.h>
@@ -12,7 +13,7 @@
 typedef struct morph_image_job {
     morph_image_id id;
     morph_http_request_id request_id;
-    void *retained_texture;
+    void *retained_render_image;
     unsigned int width;
     unsigned int height;
     morph_image_status status;
@@ -21,11 +22,20 @@ typedef struct morph_image_job {
 
 struct morph_image_service {
     void *retained_device;
+    morph_image_backend backend;
     struct nk_context *nuklear;
     morph_http_service *http;
     morph_image_job jobs[MORPHEUS_IMAGE_MAX_IMAGES];
     morph_image_id next_id;
 };
+
+static void morph_image_release_pixels(
+    void *info, const void *data, size_t size)
+{
+    (void)info;
+    (void)size;
+    free((void *)data);
+}
 
 static morph_image_job *morph_image_find(
     morph_image_service *service,
@@ -68,9 +78,7 @@ static int morph_image_upload_rgba(
     unsigned int width,
     unsigned int height)
 {
-    id<MTLDevice> device;
-    id<MTLTexture> texture;
-    MTLTextureDescriptor *descriptor;
+    unsigned long pixel_bytes;
 
     if (!pixels || !width || !height ||
         width > MORPHEUS_IMAGE_MAX_DIMENSION ||
@@ -79,23 +87,53 @@ static int morph_image_upload_rgba(
         morph_image_fail(job, "RGBA image is empty or exceeds dimension limits");
         return 0;
     }
-    device = (__bridge id<MTLDevice>)service->retained_device;
-    descriptor = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-        width:(NSUInteger)width
-        height:(NSUInteger)height
-        mipmapped:NO];
-    descriptor.usage = MTLTextureUsageShaderRead;
-    texture = [device newTextureWithDescriptor:descriptor];
-    if (!texture) {
-        morph_image_fail(job, "Unable to create the GPU texture");
-        return 0;
+    pixel_bytes = (unsigned long)width * (unsigned long)height * 4u;
+    if (service->backend == MORPHEUS_IMAGE_BACKEND_QUARTZ) {
+        unsigned char *copy = malloc((size_t)pixel_bytes);
+        CGDataProviderRef provider;
+        CGColorSpaceRef color_space;
+        CGImageRef image;
+        if (!copy) {
+            morph_image_fail(job, "Unable to copy the Quartz image pixels");
+            return 0;
+        }
+        memcpy(copy, pixels, (size_t)pixel_bytes);
+        provider = CGDataProviderCreateWithData(NULL, copy,
+            (size_t)pixel_bytes, morph_image_release_pixels);
+        color_space = CGColorSpaceCreateDeviceRGB();
+        image = provider && color_space ? CGImageCreate(
+            width, height, 8, 32, (size_t)width * 4u, color_space,
+            kCGBitmapByteOrder32Big | kCGImageAlphaLast,
+            provider, NULL, false, kCGRenderingIntentDefault) : NULL;
+        if (color_space) CGColorSpaceRelease(color_space);
+        if (provider) CGDataProviderRelease(provider);
+        else free(copy);
+        if (!image) {
+            morph_image_fail(job, "Unable to create the Quartz image");
+            return 0;
+        }
+        job->retained_render_image = image;
+    } else {
+        id<MTLDevice> device =
+            (__bridge id<MTLDevice>)service->retained_device;
+        id<MTLTexture> texture;
+        MTLTextureDescriptor *descriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+            width:(NSUInteger)width
+            height:(NSUInteger)height
+            mipmapped:NO];
+        descriptor.usage = MTLTextureUsageShaderRead;
+        texture = [device newTextureWithDescriptor:descriptor];
+        if (!texture) {
+            morph_image_fail(job, "Unable to create the GPU texture");
+            return 0;
+        }
+        [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+            mipmapLevel:0
+            withBytes:pixels
+            bytesPerRow:(NSUInteger)width * 4u];
+        job->retained_render_image = (__bridge_retained void *)texture;
     }
-    [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
-        mipmapLevel:0
-        withBytes:pixels
-        bytesPerRow:(NSUInteger)width * 4u];
-    job->retained_texture = (__bridge_retained void *)texture;
     job->width = width;
     job->height = height;
     job->status = MORPH_IMAGE_READY;
@@ -143,14 +181,18 @@ static int morph_image_decode(
 morph_image_service *morph_image_service_create(
     void *metal_device,
     struct nk_context *nuklear,
-    morph_http_service *http)
+    morph_http_service *http,
+    morph_image_backend backend)
 {
     morph_image_service *service;
     id<MTLDevice> device = (__bridge id<MTLDevice>)metal_device;
-    if (!device) return NULL;
+    if (backend != MORPHEUS_IMAGE_BACKEND_METAL &&
+        backend != MORPHEUS_IMAGE_BACKEND_QUARTZ) return NULL;
+    if (backend == MORPHEUS_IMAGE_BACKEND_METAL && !device) return NULL;
     service = calloc(1, sizeof(*service));
     if (!service) return NULL;
-    service->retained_device = (__bridge_retained void *)device;
+    if (device) service->retained_device = (__bridge_retained void *)device;
+    service->backend = backend;
     service->nuklear = nuklear;
     service->http = http;
     return service;
@@ -228,7 +270,7 @@ int morph_image_draw(morph_image_service *service, morph_image_id image_id)
 {
     morph_image_job *job = morph_image_find(service, image_id);
     if (!job || job->status != MORPH_IMAGE_READY || !service->nuklear) return 0;
-    nk_image(service->nuklear, nk_image_ptr(job->retained_texture));
+    nk_image(service->nuklear, nk_image_ptr(job->retained_render_image));
     return 1;
 }
 
@@ -237,7 +279,7 @@ void morph_image_release(morph_image_service *service, morph_image_id image_id)
     morph_image_job *job = morph_image_find(service, image_id);
     if (!job) return;
     if (job->request_id && service->http) morph_http_cancel(service->http, job->request_id);
-    if (job->retained_texture) CFRelease(job->retained_texture);
+    if (job->retained_render_image) CFRelease(job->retained_render_image);
     memset(job, 0, sizeof(*job));
 }
 

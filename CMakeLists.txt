@@ -309,6 +309,7 @@ target_compile_options(morpheus_runtime_core PRIVATE
 target_link_libraries(morpheus_runtime_core PRIVATE
     yyjson
     morpheus_stb_image
+    "-framework CoreGraphics"
     "-framework Foundation"
     "-framework Metal"
 )
@@ -353,6 +354,9 @@ target_compile_options(morpheus_standalone_runtime PRIVATE
 target_link_libraries(morpheus_standalone_runtime PRIVATE
     morpheus_runtime_core
     SDL3::SDL3-static
+    "-framework AppKit"
+    "-framework CoreGraphics"
+    "-framework CoreText"
     "-framework Metal"
     "-framework QuartzCore"
     "-framework Foundation"
@@ -554,6 +558,9 @@ target_link_libraries(morpheus PRIVATE
     morpheus_sqlite
     miniz
     SDL3::SDL3-static
+    "-framework AppKit"
+    "-framework CoreGraphics"
+    "-framework CoreText"
     "-framework Metal"
     "-framework QuartzCore"
     "-framework Foundation"
@@ -618,6 +625,28 @@ if(BUILD_TESTING)
         -Wno-c23-extensions
     )
     add_test(NAME nuklear_frame_cache COMMAND morpheus_nuklear_frame_cache_test)
+
+    add_executable(morpheus_nuklear_quartz_test
+        tests/nuklear_quartz_test.m
+    )
+    target_include_directories(morpheus_nuklear_quartz_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/host"
+    )
+    target_compile_options(morpheus_nuklear_quartz_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -fobjc-arc
+        -Wno-c23-extensions
+    )
+    target_link_libraries(morpheus_nuklear_quartz_test PRIVATE
+        SDL3::SDL3-static
+        "-framework AppKit"
+        "-framework CoreGraphics"
+        "-framework CoreText"
+    )
+    add_test(NAME nuklear_quartz COMMAND morpheus_nuklear_quartz_test)
 
     add_executable(morpheus_frame_scheduler_test
         tests/frame_scheduler_test.c
@@ -969,6 +998,27 @@ if(BUILD_TESTING)
     )
     add_test(NAME image_service COMMAND morpheus_image_service_test)
     set_tests_properties(image_service PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
+
+    add_executable(morpheus_image_service_quartz_test
+        tests/image_service_quartz_test.m
+    )
+    target_include_directories(morpheus_image_service_quartz_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/Nuklear"
+        "${CMAKE_SOURCE_DIR}/src/host"
+    )
+    target_compile_options(morpheus_image_service_quartz_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -fobjc-arc
+        -Wno-c23-extensions
+    )
+    target_link_libraries(morpheus_image_service_quartz_test PRIVATE
+        morpheus_runtime_core
+    )
+    add_test(NAME image_service_quartz
+        COMMAND morpheus_image_service_quartz_test)
 
     add_executable(morpheus_fake_agent_provider
         tests/fixtures/fake_agent_provider.c

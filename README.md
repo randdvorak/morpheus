@@ -12,9 +12,9 @@ self-contained executable that can run and persist its own state without the
 Morpheus checkout, TinyCC, an agent, or development tools.
 
 Morpheus is currently an early macOS prototype. The native shell uses SDL3,
-Nuklear, Metal, Objective-C, and C, while the builder interface itself is a
-replaceable `morph_app_api` module written in C. The architecture is intended
-to support other platforms and Nuklear rendering backends later, but those
+Nuklear, Objective-C, and C with selectable Metal and Quartz renderers, while
+the builder interface itself is a replaceable `morph_app_api` module written in
+C. The architecture is intended to support other platforms later, but those
 ports do not exist yet.
 
 ![Morpheus host running a generated Fractal Explorer](docs/images/morpheus-app2.png)
@@ -23,8 +23,8 @@ ports do not exist yet.
 
 - Minimal native SDL3 shell with a replaceable, self-hosted Nuklear builder UI
 - Versioned capability tables separating presentation from authoring providers
-- Metal renderer with three reusable frame slots, growable vertex/index
-  buffers, 32-bit draw indices, and cached texture/scissor bindings
+- Host-selectable Nuklear rendering through an optimized Metal backend or a
+  direct Quartz/Core Graphics command backend, with unchanged-frame caching
 - In-memory compilation and transactional hot reload through TinyCC
 - ABI validation, state capture/migration, failed-build recovery, and rollback
 - Named application workspaces under `projects/`
@@ -67,7 +67,7 @@ Morpheus now separates the platform shell, authoring presentation, development
 providers, generated client, and frozen runtime:
 
 ```text
-macOS shell (SDL, input, Nuklear context, Metal, recovery)
+macOS shell (SDL, input, Nuklear context, Metal/Quartz renderer, recovery)
   |
   +-> authoring UI module (`morph_app_api`)
   |     |
@@ -82,9 +82,9 @@ accepted app.c ------------------------------------+-> Clang -> frozen .app
 ```
 
 The native shell in `src/host/main.m` is the composition root. It owns the event
-loop, window, one Nuklear context and Metal renderer, constructs native services,
-registers development capabilities, and enforces immutable bootstrap and
-recovery policy. It does not implement builder widgets or multi-provider
+loop, window, one Nuklear context and host-selected renderer, constructs native
+services, registers development capabilities, and enforces immutable bootstrap
+and recovery policy. It does not implement builder widgets or multi-provider
 workflow logic.
 
 The builder presentation in `src/authoring/morpheus_app.c` compiles into
@@ -103,7 +103,7 @@ authoring capability registry. Frozen exports omit both authoring archives,
 TinyCC, and agent support.
 
 `libmorpheus_runtime_core.a` contains shared HTTP, JSON, and image services.
-`libmorpheus_standalone_runtime.a` owns the standalone SDL/Nuklear/Metal
+`libmorpheus_standalone_runtime.a` owns the standalone SDL/Nuklear renderer
 lifecycle and persistent-state envelope used by frozen applications. The frozen
 `src/export/main.m` is only a metadata and generated-entry-point adapter.
 
@@ -113,13 +113,19 @@ opaque handles rather than retaining platform service objects.
 
 ### Rendering boundary
 
-Nuklear remains the portable UI boundary. The CPU builds a command stream and
-`nk_convert` writes packed vertices and 32-bit indices directly into shared
-Metal buffers. The renderer rotates through three frame slots, grows buffers on
-demand up to configured caps, and avoids redundant texture and scissor state
-changes while encoding indexed draws. Generated modules never receive Metal
-objects or command encoders, so another host can retain the same module ABI and
-provide a different Nuklear backend.
+Nuklear remains the portable UI boundary. Generated modules build the same
+Nuklear command stream for either renderer and never receive Metal, Quartz, or
+Core Graphics objects. The default Metal backend uses `nk_convert` to write
+packed vertices and 32-bit indices into three reusable frame slots, growing its
+buffers on demand and avoiding redundant texture and scissor state changes. The
+Quartz backend instead walks the original Nuklear commands and maps lines,
+curves, shapes, clipping, text, and images directly to Core Graphics primitives.
+Both backends cache the prior command stream and skip presentation when the UI
+has not changed.
+
+Set `MORPHEUS_RENDERER=quartz` before launch to select Quartz. Metal remains the
+default, including for frozen exports, so the alternative backend does not alter
+the generated-module API or the portable host boundary.
 
 Every module exports:
 
@@ -151,7 +157,7 @@ disabled by default and is not compiled into frozen exports.
 
 ```text
 include/morpheus/  Stable app ABI, runtime SDK, and public authoring tables
-src/host/          macOS composition root, native services, and Metal renderer
+src/host/          macOS composition root, native services, and renderers
 src/runtime/       Shared standalone lifecycle and persistence implementation
 src/authoring/     Replaceable builder UI, controller, providers, and shell
 src/compiler/      TinyCC compilation, validation, and hot reload
@@ -192,6 +198,13 @@ cmake --build build --parallel
 open build/Morpheus.app
 ```
 
+Metal is the default renderer. To exercise the direct Quartz backend, launch the
+bundle executable with the renderer override:
+
+```sh
+MORPHEUS_RENDERER=quartz build/Morpheus.app/Contents/MacOS/Morpheus
+```
+
 The default Codex adapter expects the CLI bundled with ChatGPT at
 `/Applications/ChatGPT.app/Contents/Resources/codex`. Override that location
 with `MORPHEUS_CODEX_EXECUTABLE`. The user must already be authenticated for
@@ -228,11 +241,12 @@ Run the complete test suite with:
 ctest --test-dir build --output-on-failure
 ```
 
-The current macOS configuration registers 23 default tests covering capability
+The current macOS configuration registers default tests covering capability
 boundaries, authoring UI/provider separation, transactional reload and recovery,
 agent artifact isolation, runtime services, frozen-export isolation, and pinned
-dependencies. Some service tests open a loopback HTTP socket. The image test
-may skip when no Metal device is available. Enabling
+dependencies. Some service tests open a loopback HTTP socket. The Metal image
+test may skip when no Metal device is available; Quartz rendering and image
+upload have independent CPU-only coverage. Enabling
 `MORPHEUS_ENABLE_RUNTIME_LEAKCHECK` adds its allocation-accounting test. To apply
 and verify the development hardened-runtime signature and JIT entitlement:
 
@@ -328,7 +342,8 @@ include:
 
 The default frozen profile does not include TinyCC or llama.cpp. It statically
 links its included third-party runtime code and dynamically links only macOS
-system libraries/frameworks such as Foundation, Metal, and QuartzCore.
+system libraries/frameworks such as AppKit, Foundation, Core Graphics, Core
+Text, Metal, and QuartzCore.
 
 Review each dependency's included license before redistribution. Morpheus's
 original code is available under the [MIT License](LICENSE); bundled and
