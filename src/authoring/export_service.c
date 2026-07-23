@@ -12,6 +12,14 @@
 
 extern char **environ;
 
+#ifndef MORPHEUS_CMAKE_COMMAND
+#define MORPHEUS_CMAKE_COMMAND "cmake"
+#endif
+
+#ifndef MORPHEUS_EXPORT_OUTPUT_DIR
+#define MORPHEUS_EXPORT_OUTPUT_DIR "."
+#endif
+
 static int export_error(
     char *error,
     unsigned long error_capacity,
@@ -70,6 +78,7 @@ int morph_export_service_start(
     char name_environment[512];
     char bundle_environment[512];
     char version_environment[512];
+    char cmake_environment[MORPHEUS_AUTHORING_EXPORT_PATH_CAPACITY + 32];
     char *arguments[9];
     posix_spawn_file_actions_t actions;
     int descriptor;
@@ -92,8 +101,11 @@ int morph_export_service_start(
     }
 
     morph_export_service_reset(service);
-    length = snprintf(
-        service->output_path, sizeof(service->output_path), "%s", output_path);
+    length = output_path[0] == '/'
+        ? snprintf(service->output_path, sizeof(service->output_path),
+            "%s", output_path)
+        : snprintf(service->output_path, sizeof(service->output_path),
+            "%s/%s", MORPHEUS_EXPORT_OUTPUT_DIR, output_path);
     if (length < 0 || (unsigned long)length >= sizeof(service->output_path) ||
         snprintf(name_environment, sizeof(name_environment),
             "MORPHEUS_EXPORT_NAME=%s", application_name) >=
@@ -103,7 +115,10 @@ int morph_export_service_start(
             (int)sizeof(bundle_environment) ||
         snprintf(version_environment, sizeof(version_environment),
             "MORPHEUS_EXPORT_VERSION=%s", application_version) >=
-            (int)sizeof(version_environment)) {
+            (int)sizeof(version_environment) ||
+        snprintf(cmake_environment, sizeof(cmake_environment),
+            "MORPHEUS_CMAKE_COMMAND=%s", MORPHEUS_CMAKE_COMMAND) >=
+            (int)sizeof(cmake_environment)) {
         return export_error(error, error_capacity, "Export metadata is too long");
     }
 
@@ -117,10 +132,10 @@ int morph_export_service_start(
     arguments[1] = name_environment;
     arguments[2] = bundle_environment;
     arguments[3] = version_environment;
-    arguments[4] = service->tool_path;
-    arguments[5] = service->output_path;
-    arguments[6] = (char *)source_path;
-    arguments[7] = NULL;
+    arguments[4] = cmake_environment;
+    arguments[5] = service->tool_path;
+    arguments[6] = service->output_path;
+    arguments[7] = (char *)source_path;
     arguments[8] = NULL;
 
     posix_spawn_file_actions_init(&actions);
@@ -193,12 +208,22 @@ int morph_export_service_read_log(
     unsigned long output_capacity)
 {
     FILE *file;
+    long end;
+    long offset = 0;
     size_t size;
     if (!output || output_capacity == 0) return 0;
     output[0] = '\0';
     if (!service || !service->log_path[0]) return 0;
     file = fopen(service->log_path, "rb");
     if (!file) return 0;
+    if (fseek(file, 0, SEEK_END) == 0 && (end = ftell(file)) > 0 &&
+        end >= (long)output_capacity) {
+        offset = end - (long)output_capacity + 1;
+    }
+    if (fseek(file, offset, SEEK_SET) != 0) {
+        fclose(file);
+        return 0;
+    }
     size = fread(output, 1, (size_t)output_capacity - 1, file);
     output[size] = '\0';
     fclose(file);

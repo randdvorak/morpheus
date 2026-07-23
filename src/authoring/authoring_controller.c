@@ -729,6 +729,14 @@ static void poll_export(morph_authoring_controller *controller)
         MORPHEUS_AUTHORING_EXPORT_RUNNING) return;
     if (!controller->export_service->poll(
             controller->export_context, &finished, error, sizeof(error))) {
+        if (finished && controller->export_service->status(
+                controller->export_context) ==
+                MORPHEUS_AUTHORING_EXPORT_FAILED &&
+            controller->export_service->read_log(
+                controller->export_context,
+                controller->export_status_text,
+                sizeof(controller->export_status_text)) &&
+            controller->export_status_text[0]) return;
         set_text(controller->export_status_text,
             sizeof(controller->export_status_text), error);
         return;
